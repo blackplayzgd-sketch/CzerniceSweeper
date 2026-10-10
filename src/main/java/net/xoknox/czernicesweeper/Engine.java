@@ -1,5 +1,6 @@
 package net.xoknox.czernicesweeper;
 
+import javafx.animation.AnimationTimer;
 import javafx.scene.Group;
 import javafx.scene.Node;
 import javafx.scene.effect.Light;
@@ -9,12 +10,13 @@ import javafx.scene.shape.Line;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.shape.Shape;
 
-public class Engine {
+public class Engine extends Group {
     private final Circle circle = new Circle(30);
     private final Circle circlePoint = new Circle(5);
     private final Circle pistonPoint = new Circle(5);
     private final Line shaft = new Line(0, 0, 100, 100);
     private final Rectangle piston = new Rectangle(0, 0, 100, 100);
+    public final AnimationTimer timer;
 
     private final double shaftLength;
     private final double pistonWidth;
@@ -24,9 +26,10 @@ public class Engine {
 
     private double time = 0;
     private float speedMulti = 1;
+    private long previousTime = 0;
 
 
-    public Engine(Group root, int posX, int posY, double size, double shaftLength, double shaftGirth, double pistonWidth, double pistonHeight) {
+    public Engine(int posX, int posY, double size, double shaftLength, double shaftGirth, double pistonWidth, double pistonHeight) {
         this.shaftLength = shaftLength;
         this.pistonWidth = pistonWidth;
         this.pistonHeight = pistonHeight;
@@ -35,17 +38,34 @@ public class Engine {
 
         circle.setRadius(size);
         circle.setFill(Color.TRANSPARENT);
-        circle.setStroke(Color.BISQUE);
+        circle.setStroke(Utils.randomColor());
 
         shaft.setStrokeWidth(shaftGirth);
-        shaft.setFill(Color.color(0.6, 0.6, 0.6));
+        shaft.setFill(Utils.randomColor());
 
         piston.setWidth(pistonWidth);
         piston.setHeight(pistonHeight);
-        piston.setFill(Color.color(0.4, 0.4, 0.4));
+        piston.setFill(Utils.randomColor());
 
         setCenters();
-        root.getChildren().addAll(circle, shaft, piston);
+        this.getChildren().addAll(circle, shaft, piston);
+
+        timer = new AnimationTimer() {
+            @Override
+            public void handle(long now) {
+                if (previousTime == 0) {
+                    previousTime = now;
+                    return;
+                }
+
+                double dt = (now - previousTime) / 1_000_000_000.0;
+                previousTime = now;
+
+                step(dt);
+
+                //timerText.setText("Time elapsed: " + (Math.floor(sweeper.t * 329.63d * 10) / 10) + " F♭⁻¹");
+            }
+        };
     }
 
     public void step(double dt) {
