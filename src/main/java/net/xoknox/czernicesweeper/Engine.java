@@ -21,15 +21,15 @@ public class Engine extends Group {
     private final double shaftLength;
     private final double pistonWidth;
     private final double pistonHeight;
-    private final int posX;
-    private final int posY;
+    private double posX;
+    private double posY;
 
     private double time = 0;
     private float speedMulti = 1;
     private long previousTime = 0;
 
 
-    public Engine(int posX, int posY, double size, double shaftLength, double shaftGirth, double pistonWidth, double pistonHeight) {
+    public Engine(double posX, double posY, double size, double shaftLength, double shaftGirth, double pistonWidth, double pistonHeight) {
         this.shaftLength = shaftLength;
         this.pistonWidth = pistonWidth;
         this.pistonHeight = pistonHeight;
@@ -49,6 +49,7 @@ public class Engine extends Group {
 
         setCenters();
         this.getChildren().addAll(circle, shaft, piston);
+        Utils.NO_PAINT.add(circle);
 
         timer = new AnimationTimer() {
             @Override

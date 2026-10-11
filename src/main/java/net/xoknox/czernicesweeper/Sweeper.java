@@ -6,7 +6,6 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.Background;
-import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import net.xoknox.czernicesweeper.event.RemainingMinesChangedEvent;
@@ -21,14 +20,15 @@ public class Sweeper extends Group {
     private final Button clickButton = new Button();
     private final Button resetButton = new Button("Reset Le Boord Boii");
     private final Text mineText = new Text("Mines left: " + MINE_COUNT);
-    private final ImageView winView = new ImageView(Textures.WIN.get());
+    private final ImageView winView = new ImageView(Textures.WIN);
     public final TextTimer timer = new TextTimer("Time elapsed: %e %s", Units.HOUR);
 
     private final int posX;
     private final int posY;
-    private final int width;
-    private final int height;
-    private final int mineCount;
+
+    private int width;
+    private int height;
+    private int mineCount;
 
     private ArrayGrid<Boolean> mines;
     private ArrayGrid<Boolean> flags;
@@ -123,7 +123,7 @@ public class Sweeper extends Group {
     }
 
     public void placeMines() {
-        int remaining = mineCount;
+        int remaining = Math.min(mineCount, width * height);
 
         while (remaining > 0) {
             int x = (int) (Math.random() * width);
@@ -268,10 +268,10 @@ public class Sweeper extends Group {
 
         for (int x = 0; x < width; x++) {
             for (int y = 0; y < height; y++) {
-                Image stateImage = isRevealed(x, y) ? Textures.REVEALED.get() : Textures.HIDDEN.get();
+                Image stateImage = isRevealed(x, y) ? Textures.REVEALED : Textures.HIDDEN;
                 Image typeImage = getTypeImageForTile(x, y);
 
-                double[] scale = Utils.getScaleForImage(Textures.HIDDEN.get());
+                double[] scale = Utils.getScaleForImage(Textures.HIDDEN);
 
                 ImageView stateView = new ImageView(stateImage);
                 ImageView typeView = new ImageView(typeImage);
@@ -307,19 +307,19 @@ public class Sweeper extends Group {
     private Image getTypeImageForTile(int x, int y) {
         int mineAmount = getMinesAroundCount(x, y);
 
-        if (isFlag(x, y)) return Textures.FLAG.get();
-        if (isMine(x, y)) return Textures.MINE.get();
+        if (isFlag(x, y)) return Textures.FLAG;
+        if (isMine(x, y)) return Textures.MINE;
 
         switch (mineAmount) {
-            case 1: return Textures.ONE.get();
-            case 2: return Textures.TWO.get();
-            case 3: return Textures.THREE.get();
-            case 4: return Textures.FOUR.get();
-            case 5: return Textures.FIVE.get();
-            case 6: return Textures.SIX.get();
-            case 7: return Textures.SEVEN.get();
-            case 8: return Textures.EIGHT.get();
-            default: return Textures.EMPTY.get();
+            case 1: return Textures.ONE;
+            case 2: return Textures.TWO;
+            case 3: return Textures.THREE;
+            case 4: return Textures.FOUR;
+            case 5: return Textures.FIVE;
+            case 6: return Textures.SIX;
+            case 7: return Textures.SEVEN;
+            case 8: return Textures.EIGHT;
+            default: return Textures.EMPTY;
         }
 
     }
@@ -362,6 +362,7 @@ public class Sweeper extends Group {
     }
 
     private void setupClickButton() {
+        Utils.NO_PAINT.add(clickButton);
         clickButton.setLayoutX(posX);
         clickButton.setLayoutY(posY);
         clickButton.setPrefSize(CELL_SIZE * width, CELL_SIZE * height);
@@ -436,4 +437,19 @@ public class Sweeper extends Group {
 
         return mineCount - sum;
     }
+
+    public void setWidth(int width) {
+        this.width = width;
+        this.reset();
+
+    }
+    public void setHeight(int height) {
+        this.height = height;
+        this.reset();
+    }
+    public void setMineCount(int mineCount) {
+        this.mineCount = mineCount;
+        this.reset();
+    }
+
 }

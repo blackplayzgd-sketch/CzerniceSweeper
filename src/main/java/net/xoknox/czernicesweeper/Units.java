@@ -5,6 +5,8 @@ public enum Units {
     HOUR(1 / 3600d, "h", "Hour"),
     YOCTOSECOND(1000000000000000000000000d, "ys", "Yoctosecond"),
 
+    ROOT_BEARD_FORTNIGHT_CUBED_ELEPHANT_PER_G(1 / 4713.7229484d, "√(Bfn³*El*G⁻¹)", "Root Beard Fortnight Cubed Elephant per G"),
+
     PER_C( 261.63d, "C⁻¹", "per C"),
     PER_C_FLAT( 246.94d, "C♭⁻¹", "per C♭"),
     PER_C_SHARP( 277.18d, "C♯⁻¹", "per C♯"),
