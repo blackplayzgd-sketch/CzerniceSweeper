@@ -22,6 +22,7 @@ public class CzerniceSweeper extends Application {
         System.out.println(Units.YOCTOSECOND.t());
 
         backgroundMusicPlayer = new BackgroundMusicPlayer(gameSettings);
+
         gameSettings.setBackgroundMusicPlayer(backgroundMusicPlayer);
 
         Settings settings = new Settings(gameSettings);

@@ -352,7 +352,7 @@ public class Sweeper extends Group {
 
         timer.setFont(Font.font("impact", 40));
         timer.setFill(Utils.randomColor());
-        timer.setX(400);
+        timer.setX(200);
         timer.setY(800);
         timer.addEventHandler(
                 TimeUnitChangedEvent.TIME_UNIT_CHANGED,
@@ -405,6 +405,7 @@ public class Sweeper extends Group {
         for (int x = 0; x < width; x++) {
             for (int y = 0; y < height; y++) {
                 if (isMine(x, y)) if (!isFlag(x, y)) return;
+                if (isFlag(x, y)) if (!isMine(x, y)) return;
             }
         }
         win();
@@ -450,7 +451,8 @@ public class Sweeper extends Group {
         this.reset();
     }
     public void setMineCount(int mineCount) {
-        this.mineCount = mineCount;
+
+        this.mineCount = Math.min(mineCount, width * height - 1);
         this.reset();
     }
 

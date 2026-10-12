@@ -58,7 +58,7 @@ public class BackgroundMusicPlayer implements IGameSettingable {
 
 
         });
-        this.gameSettings.midFreqGainProperty().addListener((observable, oldValue, newValue) -> {
+        this.gameSettings.highFreqGainProperty().addListener((observable, oldValue, newValue) -> {
             double actualGain = newValue.doubleValue() < 0 ? newValue.doubleValue() * 2 : newValue.doubleValue();
             highGain = actualGain;
             setBandsGain(player, lowGain, midGain, highGain);
