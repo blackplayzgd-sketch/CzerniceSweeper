@@ -84,7 +84,7 @@ public class GameSettings {
         this.musicRate.setValue(volume);
     }
     public void setMusicBalance(double balance) {
-        this.musicRate.setValue(balance);
+        this.musicBalance.setValue(balance);
     }
     public void setLowFreqGain(double gain) {
         this.lowFreqGain.setValue(gain);

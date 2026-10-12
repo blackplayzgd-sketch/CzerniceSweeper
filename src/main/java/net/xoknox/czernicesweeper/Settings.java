@@ -89,7 +89,7 @@ public class Settings extends Pane implements IGameSettingable {
         musicLabel.setLayoutY(100);
         musicLabel.setBackground(Background.fill(randomColor()));
 
-        ArrayList<Double> sliderYs = new ArrayList<>(List.of(150d, 170d, 190d, 210d, 230d));
+        ArrayList<Double> sliderYs = new ArrayList<>(List.of(150d, 170d, 190d, 210d, 230d, 250d));
 
         sliderYs = Utils.shuffle(sliderYs);
 
@@ -109,9 +109,17 @@ public class Settings extends Pane implements IGameSettingable {
             Settings.this.gameSettings.setMusicRate((Double) newVal);
         });
 
+        Slider balanceSlider = new Slider(-1, 1, 0);
+        balanceSlider.setLayoutX(450);
+        balanceSlider.setLayoutY(sliderYs.get(2));
+        balanceSlider.setBackground(Background.fill(randomColor()));
+        balanceSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setMusicBalance((Double) newVal);
+        });
+
         Slider lowFreqSlider = new Slider(-12, 12, 0);
         lowFreqSlider.setLayoutX(450);
-        lowFreqSlider.setLayoutY(sliderYs.get(2));
+        lowFreqSlider.setLayoutY(sliderYs.get(3));
         lowFreqSlider.setBackground(Background.fill(randomColor()));
         lowFreqSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
             Settings.this.gameSettings.setLowFreqGain((Double) newVal);
@@ -119,7 +127,7 @@ public class Settings extends Pane implements IGameSettingable {
 
         Slider midFreqSlider = new Slider(-12, 12, 0);
         midFreqSlider.setLayoutX(450);
-        midFreqSlider.setLayoutY(sliderYs.get(3));
+        midFreqSlider.setLayoutY(sliderYs.get(4));
         midFreqSlider.setBackground(Background.fill(randomColor()));
         midFreqSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
             Settings.this.gameSettings.setMidFreqGain((Double) newVal);
@@ -127,7 +135,7 @@ public class Settings extends Pane implements IGameSettingable {
 
         Slider highFreqSlider = new Slider(-12, 12, 0);
         highFreqSlider.setLayoutX(450);
-        highFreqSlider.setLayoutY(sliderYs.get(4));
+        highFreqSlider.setLayoutY(sliderYs.get(5));
         highFreqSlider.setBackground(Background.fill(randomColor()));
         highFreqSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
             Settings.this.gameSettings.setHighFreqGain((Double) newVal);
@@ -138,7 +146,7 @@ public class Settings extends Pane implements IGameSettingable {
                 backButton,
                 widthInput, heightInput, mineCountInput, updateButton,
                 colorButton,
-                volumeSlider, rateSlider, lowFreqSlider, midFreqSlider, highFreqSlider, musicLabel);
+                volumeSlider, rateSlider, balanceSlider, lowFreqSlider, midFreqSlider, highFreqSlider, musicLabel);
     }
 
     private void updateButtonClick() {

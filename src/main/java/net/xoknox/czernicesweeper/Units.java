@@ -6,6 +6,7 @@ public enum Units {
     YOCTOSECOND(1000000000000000000000000d, "ys", "Yoctosecond"),
 
     ROOT_BEARD_FORTNIGHT_CUBED_ELEPHANT_PER_G(1 / 4713.7229484d, "√(Bfn³*El*G⁻¹)", "Root Beard Fortnight Cubed Elephant per G"),
+    R_CUBIC_METRE_OXYGENS_RUTHERFORDIUM_MELTING_POINT_PER_MASS_CUBIC_MICROMETRE_POLYTETRAFLUOROETHYLENE_PER_CENTRIPETAL_ACCELERATION_KEPLER_22B_PER_KILOKNOT(1 / 988555820150000000d, "RMRᵤP⁻¹A⁻¹K⁻¹", "R Cubic Metre Oxygens Rutherfordium Melting Point per Mass Polytetrafluoroethylene Cubic Micrometre per Kepler 22-b Centripetal Acceleration per Kiloknot"),
 
     PER_C( 261.63d, "C⁻¹", "per C"),
     PER_C_FLAT( 246.94d, "C♭⁻¹", "per C♭"),
