@@ -7,6 +7,7 @@ import java.nio.file.Path;
 public final class AppData {
     private static final Path DIRECTORY = Path.of(System.getenv("APPDATA"), "CzerniceSweeper");
 
+
     private AppData() {}
 
     public static Path getDirectory() {

@@ -9,7 +9,7 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Shape;
 
 import java.net.URL;
-import java.util.ArrayList;
+import java.util.*;
 
 public class Utils {
     public static final int[] WINDOW_SIZE = new int[]{1300, 850};
@@ -17,7 +17,8 @@ public class Utils {
     public static final int MINE_COUNT = 110;
     public static final ArrayList<Node> NO_PAINT = new ArrayList<>();
     public static double[] getScaleForImage(Image image) {
-        return new double[]{image.getWidth() / Sweeper.CELL_SIZE, image.getHeight() / Sweeper.CELL_SIZE};
+        //return new double[]{image.getWidth() / Sweeper.CELL_SIZE, image.getHeight() / Sweeper.CELL_SIZE};
+        return new double[]{ Sweeper.CELL_SIZE / image.getWidth(), Sweeper.CELL_SIZE / image.getHeight()};
     }
 
     public static void init() {
@@ -54,5 +55,19 @@ public class Utils {
 
     public static int randIntRange(int min, int max) {
         return (int) (Math.random() * (max - min)) + min;
+    }
+
+    public static <T> ArrayList<T> shuffle(ArrayList<T> list) {
+        ArrayList<T> copy = (ArrayList<T>) list.clone();
+        ArrayList<T> output = new ArrayList<>();
+        int size = list.size();
+        for (int i = 0; i < list.size(); i++) {
+            int removedIdx = randIntRange(0, size);
+            output.add(copy.get(removedIdx));
+            copy.remove(removedIdx);
+            size--;
+        }
+
+        return output;
     }
 }

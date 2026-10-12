@@ -12,6 +12,9 @@ import javafx.scene.shape.Shape;
 import javafx.stage.Stage;
 import lombok.Setter;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static net.xoknox.czernicesweeper.Utils.randomColor;
 
 public class Settings extends Pane implements IGameSettingable {
@@ -81,33 +84,77 @@ public class Settings extends Pane implements IGameSettingable {
             Utils.randomizeColorsInParent(gameSettings.getSettingsScene().getRoot());
         });
 
+        Label musicLabel = new Label("Musik");
+        musicLabel.setLayoutX(450);
+        musicLabel.setLayoutY(100);
+        musicLabel.setBackground(Background.fill(randomColor()));
 
+        ArrayList<Double> sliderYs = new ArrayList<>(List.of(150d, 170d, 190d, 210d, 230d));
 
-        Slider volumeSlider = new Slider(0, 1, 1);
+        sliderYs = Utils.shuffle(sliderYs);
+
+        Slider volumeSlider = new Slider(0, 1, 0.5);
         volumeSlider.setLayoutX(450);
-        volumeSlider.setLayoutY(150);
+        volumeSlider.setLayoutY(sliderYs.get(0));
         volumeSlider.setBackground(Background.fill(randomColor()));
         volumeSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
             Settings.this.gameSettings.setMusicVolume((Double) newVal);
         });
 
-        Label volumeLabel = new Label("Laustärke");
-        volumeLabel.setLayoutX(450);
-        volumeLabel.setLayoutY(100);
-        volumeLabel.setBackground(Background.fill(randomColor()));
+        Slider rateSlider = new Slider(0, 2, 1);
+        rateSlider.setLayoutX(450);
+        rateSlider.setLayoutY(sliderYs.get(1));
+        rateSlider.setBackground(Background.fill(randomColor()));
+        rateSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setMusicRate((Double) newVal);
+        });
+
+        Slider lowFreqSlider = new Slider(-12, 12, 0);
+        lowFreqSlider.setLayoutX(450);
+        lowFreqSlider.setLayoutY(sliderYs.get(2));
+        lowFreqSlider.setBackground(Background.fill(randomColor()));
+        lowFreqSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setLowFreqGain((Double) newVal);
+        });
+
+        Slider midFreqSlider = new Slider(-12, 12, 0);
+        midFreqSlider.setLayoutX(450);
+        midFreqSlider.setLayoutY(sliderYs.get(3));
+        midFreqSlider.setBackground(Background.fill(randomColor()));
+        midFreqSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setMidFreqGain((Double) newVal);
+        });
+
+        Slider highFreqSlider = new Slider(-12, 12, 0);
+        highFreqSlider.setLayoutX(450);
+        highFreqSlider.setLayoutY(sliderYs.get(4));
+        highFreqSlider.setBackground(Background.fill(randomColor()));
+        highFreqSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setHighFreqGain((Double) newVal);
+        });
 
 
-
-        this.getChildren().addAll(timeMenuBar, backButton, widthInput, heightInput, mineCountInput, updateButton, colorButton, volumeSlider, volumeLabel);
+        this.getChildren().addAll(timeMenuBar,
+                backButton,
+                widthInput, heightInput, mineCountInput, updateButton,
+                colorButton,
+                volumeSlider, rateSlider, lowFreqSlider, midFreqSlider, highFreqSlider, musicLabel);
     }
 
     private void updateButtonClick() {
-        int newWidth = Integer.parseInt(widthInput.getText());
-        int newHeight = Integer.parseInt(heightInput.getText());
-        int newMineCount = Integer.parseInt(mineCountInput.getText());
-        Settings.this.gameSettings.setWidth(newWidth);
-        Settings.this.gameSettings.setHeight(newHeight);
-        Settings.this.gameSettings.setMineCount(newMineCount);
+        try {
+            int newWidth = Integer.parseInt(widthInput.getText());
+            int newHeight = Integer.parseInt(heightInput.getText());
+            int newMineCount = Integer.parseInt(mineCountInput.getText());
+
+            Settings.this.gameSettings.setWidth(newWidth);
+            Settings.this.gameSettings.setHeight(newHeight);
+            Settings.this.gameSettings.setMineCount(newMineCount);
+        } catch (NumberFormatException e) {
+
+        }
+
+
 
         System.out.println("Submittied text!");
     }

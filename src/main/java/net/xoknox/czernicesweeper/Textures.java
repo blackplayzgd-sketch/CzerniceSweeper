@@ -46,7 +46,7 @@ public class Textures {
         };
 
         for (String fileName : textureFiles) {
-            Path path = AssetInstaller.installIfMissing("/textures/" + fileName + ".png");
+            Path path = AssetInstaller.installIfMissing("textures/" + fileName + ".png");
             textures.put(fileName, path);
             texturesImage.put(fileName, path.toUri().toString());
         }

@@ -17,7 +17,7 @@ public class Game extends Group implements IGameSettingable {
 
     private final Engine engine;
     private final Sweeper sweeper;
-    private final Text title = new Text(100, 70, "Czernicesweeper v0.0.1-θ");
+    private final Text title = new Text(100, 70, "Czernicesweeper v0.0.2-Σ");
     private final Button settingsButton = new Button();
 
 

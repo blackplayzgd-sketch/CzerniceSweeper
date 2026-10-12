@@ -15,6 +15,9 @@ import java.util.ArrayList;
 
 public class BackgroundMusicPlayer implements IGameSettingable {
     private final ArrayList<String[]> songs = new ArrayList<>();
+    private double volume = 1d;
+    private double rat = 1d;
+    private double balance = 0d;
 
     private MediaPlayer player;
 
@@ -23,8 +26,33 @@ public class BackgroundMusicPlayer implements IGameSettingable {
     public BackgroundMusicPlayer(GameSettings gameSettings) {
         this.gameSettings = gameSettings;
         getMusic();
+
         this.gameSettings.musicVolumeProperty().addListener(((observable, oldValue, newValue) ->
                 player.setVolume((Double) newValue)));
+        this.gameSettings.musicRateProperty().addListener(((observable, oldValue, newValue) ->
+                player.setRate((Double) newValue)));
+        this.gameSettings.musicBalanceProperty().addListener(((observable, oldValue, newValue) ->
+                player.setBalance((Double) newValue)));
+
+        this.gameSettings.lowFreqGainProperty().addListener((observable, oldValue, newValue) -> {
+            double actualGain = newValue.doubleValue() < 0 ? newValue.doubleValue() * 2 : newValue.doubleValue();
+            player.getAudioEqualizer().getBands().get(0).setGain(actualGain);
+            player.getAudioEqualizer().getBands().get(1).setGain(actualGain);
+            player.getAudioEqualizer().getBands().get(2).setGain(actualGain);
+            player.getAudioEqualizer().getBands().get(3).setGain(actualGain);
+        });
+        this.gameSettings.midFreqGainProperty().addListener((observable, oldValue, newValue) -> {
+            double actualGain = newValue.doubleValue() < 0 ? newValue.doubleValue() * 2 : newValue.doubleValue();
+            player.getAudioEqualizer().getBands().get(4).setGain(actualGain);
+            player.getAudioEqualizer().getBands().get(5).setGain(actualGain);
+            player.getAudioEqualizer().getBands().get(6).setGain(actualGain);
+        });
+        this.gameSettings.midFreqGainProperty().addListener((observable, oldValue, newValue) -> {
+            double actualGain = newValue.doubleValue() < 0 ? newValue.doubleValue() * 2 : newValue.doubleValue();
+            player.getAudioEqualizer().getBands().get(7).setGain(actualGain);
+            player.getAudioEqualizer().getBands().get(8).setGain(actualGain);
+            player.getAudioEqualizer().getBands().get(9).setGain(actualGain);
+        });
     }
 
     public void start() {
@@ -33,6 +61,8 @@ public class BackgroundMusicPlayer implements IGameSettingable {
 
         player = new MediaPlayer(media);
         this.gameSettings.currSongProperty().setValue(song[1]);
+        player.setAutoPlay(true);
+        player.getAudioEqualizer().setEnabled(true);
         System.out.println(song[1]);
         updateMusicPlayer(player);
     }
@@ -52,16 +82,24 @@ public class BackgroundMusicPlayer implements IGameSettingable {
     }
 
     private void updateMusicPlayer(MediaPlayer player) {
-        player.setAutoPlay(true);
+
         player.setOnEndOfMedia(() -> {
+            System.out.println("EXECUTEDDDDDD");
+
             String[] newSong = getRandomSong();
             Media newSongMedia = new Media(newSong[0]);
+
             MediaPlayer newPlayer = new MediaPlayer(newSongMedia);
             newPlayer.setAutoPlay(true);
+            newPlayer.getAudioEqualizer().setEnabled(true);
+            newPlayer.setVolume(gameSettings.musicVolumeProperty().getValue());
+            newPlayer.setRate(gameSettings.musicVolumeProperty().getValue());
+            newPlayer.setBalance(gameSettings.musicVolumeProperty().getValue());
+
             this.player.dispose();
             this.player = newPlayer;
             gameSettings.currSongProperty().setValue(newSong[1]);
-            updateMusicPlayer(player);
+            updateMusicPlayer(this.player);
         });
 
     }

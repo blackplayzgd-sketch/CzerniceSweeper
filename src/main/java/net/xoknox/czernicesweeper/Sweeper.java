@@ -13,6 +13,7 @@ import net.xoknox.czernicesweeper.event.TimeUnitChangedEvent;
 import net.xoknox.czernicesweeper.event.WinEvent;
 
 import static net.xoknox.czernicesweeper.Utils.MINE_COUNT;
+import static net.xoknox.czernicesweeper.Utils.getScaleForImage;
 
 public class Sweeper extends Group {
     public static final int CELL_SIZE = 30;
@@ -271,18 +272,19 @@ public class Sweeper extends Group {
                 Image stateImage = isRevealed(x, y) ? Textures.REVEALED : Textures.HIDDEN;
                 Image typeImage = getTypeImageForTile(x, y);
 
-                double[] scale = Utils.getScaleForImage(Textures.HIDDEN);
+                double[] scaleState = Utils.getScaleForImage(stateImage);
+                double[] scaleType = Utils.getScaleForImage(typeImage);
 
                 ImageView stateView = new ImageView(stateImage);
                 ImageView typeView = new ImageView(typeImage);
 
-                stateView.setScaleX(scale[0]);
-                stateView.setScaleY(scale[1]);
+                stateView.setScaleX(scaleState[0]);
+                stateView.setScaleY(scaleState[1]);
                 stateView.setX(CELL_SIZE * x + posX);
                 stateView.setY(CELL_SIZE * y + posY);
 
-                typeView.setScaleX(scale[0]);
-                typeView.setScaleY(scale[1]);
+                typeView.setScaleX(scaleType[0]);
+                typeView.setScaleY(scaleType[1]);
                 typeView.setX(CELL_SIZE * x + posX);
                 typeView.setY(CELL_SIZE * y + posY);
 
