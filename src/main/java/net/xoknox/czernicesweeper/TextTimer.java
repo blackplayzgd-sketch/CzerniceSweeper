@@ -10,23 +10,10 @@ public class TextTimer extends Text {
     private double t = 0;
     private boolean paused = true;
 
-    public AnimationTimer timer = new AnimationTimer() {
+    public DtAnimationTimer timer = new DtAnimationTimer() {
 
-        @Override
-        public void handle(long now) {
-            if (paused) {
-                previousTime = 0;
-                return;
-            }
-
-            if (previousTime == 0) {
-                previousTime = now;
-                return;
-            }
-
-            double dt = (now - previousTime) / 1_000_000_000.0;
-            previousTime = now;
-            t += dt;
+        public void step(double dt) {
+            if (!paused) t += dt;
             TextTimer.this.updateText();
         }
     };

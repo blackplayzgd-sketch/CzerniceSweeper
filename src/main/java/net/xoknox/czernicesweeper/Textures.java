@@ -33,6 +33,8 @@ public class Textures {
 
     public static Image WIN;
 
+    public static Image LOGO;
+
 
 
 
@@ -42,7 +44,8 @@ public class Textures {
                 "flag", "mine",
                 "empty",
                 "1", "2", "3", "4", "5", "6", "7", "8",
-                "win"
+                "win",
+                "logo"
         };
 
         for (String fileName : textureFiles) {
@@ -69,6 +72,8 @@ public class Textures {
         EIGHT = new Image(texturesImage.get("8"));
 
         WIN = new Image(texturesImage.get("win"));
+
+        LOGO = new Image(texturesImage.get("logo"));
     }
 
 

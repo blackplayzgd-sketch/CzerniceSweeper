@@ -3,6 +3,9 @@ package net.xoknox.czernicesweeper;
 import javafx.scene.Group;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.Background;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
@@ -17,8 +20,9 @@ public class Game extends Group implements IGameSettingable {
 
     private final Engine engine;
     private final Sweeper sweeper;
-    private final Text title = new Text(100, 70, "Czernicesweeper v0.0.2-Σ");
+    private final Text title = new Text(100, 70, "CzerniceSweeper v0.0.3-ζ");
     private final Button settingsButton = new Button();
+    private final ImageView titleImage = new ImageView(Textures.LOGO);
 
 
     private GameSettings gameSettings;
@@ -38,6 +42,15 @@ public class Game extends Group implements IGameSettingable {
         this.gameSettings.mineCountProperty().addListener((obs, oldVal, newVal) -> sweeper.setMineCount((Integer) newVal));
         setupUI();
 
+        CheckBox hardModeCheckBox = new CheckBox("Hard moed");
+        hardModeCheckBox.setLayoutX(1100);
+        hardModeCheckBox.setLayoutY(260);
+        hardModeCheckBox.setFont(Font.font("impact", 20));
+        hardModeCheckBox.setPrefSize(150, 60);
+        hardModeCheckBox.setBackground(Background.fill(Utils.randomColor()));
+        hardModeCheckBox.selectedProperty().addListener((observable, oldValue, newValue) -> {
+            sweeper.setHardMode(newValue);
+        });
 
 
 
@@ -58,7 +71,7 @@ public class Game extends Group implements IGameSettingable {
 
          */
 
-        this.getChildren().addAll(sweeper, settingsButton, engine, title);
+        this.getChildren().addAll(sweeper, settingsButton, engine, titleImage, hardModeCheckBox);
 
 
 
@@ -67,6 +80,10 @@ public class Game extends Group implements IGameSettingable {
     private void setupUI() {
         title.setFont(Font.font("impact", 50));
         title.setFill(Utils.randomColor());
+        //titleImage.setScaleX(2);
+        titleImage.setX(100);
+        titleImage.setY(5);
+
 
         settingsButton.setText("Settignes");
         settingsButton.setLayoutX(1000);

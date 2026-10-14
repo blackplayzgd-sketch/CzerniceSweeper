@@ -48,7 +48,7 @@ public class CzerniceSweeper extends Application {
 
         primaryStage.setScene(gameScene);
         primaryStage.getIcons().add(icon);
-        primaryStage.setTitle("Czernicesweeper v0.0.1-θ");
+        primaryStage.setTitle("CzerniceSweeper v0.0.3-ζ");
 
         backgroundMusicPlayer.start();
         primaryStage.show();

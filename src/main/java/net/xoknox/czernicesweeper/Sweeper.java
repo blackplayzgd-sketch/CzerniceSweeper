@@ -1,6 +1,7 @@
 package net.xoknox.czernicesweeper;
 
 import javafx.scene.Group;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -8,12 +9,15 @@ import javafx.scene.input.MouseButton;
 import javafx.scene.layout.Background;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
+import lombok.Getter;
+import lombok.Setter;
 import net.xoknox.czernicesweeper.event.RemainingMinesChangedEvent;
 import net.xoknox.czernicesweeper.event.TimeUnitChangedEvent;
 import net.xoknox.czernicesweeper.event.WinEvent;
 
-import static net.xoknox.czernicesweeper.Utils.MINE_COUNT;
-import static net.xoknox.czernicesweeper.Utils.getScaleForImage;
+import java.util.ArrayList;
+
+import static net.xoknox.czernicesweeper.Utils.*;
 
 public class Sweeper extends Group {
     public static final int CELL_SIZE = 30;
@@ -38,7 +42,10 @@ public class Sweeper extends Group {
     private Group lastNode;
     private boolean hasClicked = false;
     private boolean dead = false;
-    private boolean playing = false;
+    @Getter
+    @Setter
+    private boolean hardMode = false;
+    private boolean playing = true;
 
     public int t = 0;
 
@@ -64,21 +71,62 @@ public class Sweeper extends Group {
 
     }
 
+    public void pause() {
+        playing = !playing;
 
+        if (!playing) timer.stop();
+        else timer.start();
 
-    public void leftClick(int x, int y) {
+    }
+
+    public double getRevealedFractionNoMines() {
+        int sum = 0;
+
+        for (int x = 0; x < width; x++) {
+            for (int y = 0; y < height; y++) {
+                if (isRevealed(x, y)) sum++;
+            }
+        }
+        return (double) sum / (width * height - mineCount);
+    }
+
+    private void spawnSkillCheck() {
+        if (Math.random() > 0.5) {
+            playing = false;
+            SkillCheck skillCheck = new SkillCheck(180,Utils.fracOfRange(100, 400, getRevealedFractionNoMines()), Utils.fracOfRange(100, 10, getRevealedFractionNoMines()));
+            skillCheck.setLayoutX(1000);
+            skillCheck.setLayoutY(400);
+            skillCheck.winProperty().addListener((observable, oldValue, newValue) -> {
+                playing = true;
+                getChildren().remove(skillCheck);
+            });
+            skillCheck.loseProperty().addListener((observable, oldValue, newValue) -> {
+                playing = true;
+                die();
+                getChildren().remove(skillCheck);
+            });
+            skillCheck.start();
+            getChildren().add(skillCheck);
+        }
+
+    }
+
+    public void leftClick(int x, int y, boolean clickedBgPlayer) {
         if (dead) return;
-        if (isRevealed(x, y)) chord(x, y);
+        if (isRevealed(x, y) && clickedBgPlayer) chord(x, y);
         if (isFlag(x, y)) return;
 
         if (isMine(x, y)) {
             if (!hasClicked) {
                 reset();
-                leftClick(x, y);
+                leftClick(x, y, true);
             } else {
                 die();
             }
         } else {
+            if (hardMode && clickedBgPlayer) {
+                spawnSkillCheck();
+            }
             revealTile(x, y);
         }
 
@@ -96,18 +144,26 @@ public class Sweeper extends Group {
 
         hasClicked = false;
         dead = false;
-        playing = false;
+        playing = true;
         t = 0;
         timer.reset();
         timer.stop();
+
+        ArrayList<Node> toRemove = new ArrayList<>();
+        for (Node child : getChildren()) {
+            if (child instanceof SkillCheck) toRemove.add(child);
+        }
+        getChildren().removeAll(toRemove);
         placeMines();
         updateRemainingMineCount();
         updateBoardVisuals();
+
     }
 
     public void die() {
         dead = true;
         timer.stop();
+        updateBoardVisuals();
         System.out.println("DIED");
     }
 
@@ -140,12 +196,15 @@ public class Sweeper extends Group {
     public void chord(int x, int y) {
         System.out.println("chording!");
         if (getFlagsAroundCount(x, y) == getMinesAroundCount(x, y)) {
+            if (hardMode && getFlagsAroundCount(x, y) + getOpenAroundCount(x, y) != 8) {
+                //spawnSkillCheck();
+            }
             revealNeighbours(x, y);
         }
     }
 
     public void revealTile(int x, int y) {
-        revealed.set(x, y, true);
+        setRevealed(x, y, true);
 
         if (isFlag(x, y)) flagTile(x, y);
 
@@ -158,7 +217,7 @@ public class Sweeper extends Group {
     }
 
     public void flagTile(int x, int y) {
-        if (!isRevealed(x, y)) flags.set(x, y, !flags.get(x, y));
+        if (!isRevealed(x, y)) setFlag(x, y, !flags.get(x, y));
         updateRemainingMineCount();
     }
 
@@ -173,7 +232,7 @@ public class Sweeper extends Group {
                     System.out.println("passed if 2");
                     if (isRevealed(x + i, y + j)) continue;
 
-                    leftClick(x + i, y + j);
+                    leftClick(x + i, y + j, false);
 
                 }
             }
@@ -251,6 +310,25 @@ public class Sweeper extends Group {
                     if (y + j < 0 || y + j > height - 1) continue;
 
                     if (isFlag(x + i, y + j)) sum++;
+
+                }
+            }
+        }
+
+        return sum;
+    }
+
+    private int getOpenAroundCount(int x, int y) {
+        int sum = 0;
+
+        for (int i = -1; i < 2; i++) {
+            for (int j = -1; j < 2; j++) {
+                if (!(i == 0 && j == 0)) {
+
+                    if (x + i < 0 || x + i > width - 1) continue;
+                    if (y + j < 0 || y + j > height - 1) continue;
+
+                    if (isRevealed(x + i, y + j)) sum++;
 
                 }
             }
@@ -371,21 +449,21 @@ public class Sweeper extends Group {
         clickButton.setBackground(Background.EMPTY);
         clickButton.setOnMousePressed(e -> {
             System.out.println("CLLLLICK");
-            if (!dead) {
+            if (!dead && playing) {
                 int clickedX = (int) ((e.getSceneX() - this.posX) / CELL_SIZE);
                 int clickedY = (int) ((e.getSceneY() - this.posY) / CELL_SIZE);
                 if (e.getButton() == MouseButton.PRIMARY) {
                     System.out.println("clickes!");
-                    leftClick(clickedX, clickedY);
+                    leftClick(clickedX, clickedY, true);
                 } else if (e.getButton() == MouseButton.SECONDARY) {
                     rightClick(clickedX, clickedY);
                 }
-                playing = true;
                 System.out.println("CLLLICK (2)");
                 if (!dead) timer.start();
             }
             checkWinCondition();
             updateBoardVisuals();
+
         });
         clickButton.addEventHandler(
                 RemainingMinesChangedEvent.REMAINING_MINES_CHANGED,
@@ -454,6 +532,16 @@ public class Sweeper extends Group {
 
         this.mineCount = Math.min(mineCount, width * height - 1);
         this.reset();
+    }
+
+    public void setRevealed(int x, int y, boolean value) {
+        revealed.set(x, y, value);
+
+    }
+
+    public void setFlag(int x, int y, boolean value) {
+        flags.set(x, y, value);
+
     }
 
 }

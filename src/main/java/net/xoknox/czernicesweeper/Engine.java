@@ -16,7 +16,7 @@ public class Engine extends Group {
     private final Circle pistonPoint = new Circle(5);
     private final Line shaft = new Line(0, 0, 100, 100);
     private final Rectangle piston = new Rectangle(0, 0, 100, 100);
-    public final AnimationTimer timer;
+    public final DtAnimationTimer timer;
 
     private final double shaftLength;
     private final double pistonWidth;
@@ -51,20 +51,10 @@ public class Engine extends Group {
         this.getChildren().addAll(circle, shaft, piston);
         Utils.NO_PAINT.add(circle);
 
-        timer = new AnimationTimer() {
+        timer = new DtAnimationTimer() {
             @Override
-            public void handle(long now) {
-                if (previousTime == 0) {
-                    previousTime = now;
-                    return;
-                }
-
-                double dt = (now - previousTime) / 1_000_000_000.0;
-                previousTime = now;
-
-                step(dt);
-
-                //timerText.setText("Time elapsed: " + (Math.floor(sweeper.t * 329.63d * 10) / 10) + " F♭⁻¹");
+            public void step(double dt) {
+                Engine.this.step(dt);
             }
         };
     }
