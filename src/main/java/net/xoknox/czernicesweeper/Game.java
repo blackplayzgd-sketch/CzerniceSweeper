@@ -1,27 +1,22 @@
 package net.xoknox.czernicesweeper;
 
 import javafx.scene.Group;
-import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
-import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.layout.Background;
-import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
-import javafx.stage.Stage;
-import lombok.Setter;
+import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
 import static net.xoknox.czernicesweeper.Utils.MINE_COUNT;
-import static net.xoknox.czernicesweeper.Utils.randomColor;
+import static net.xoknox.czernicesweeper.ui.CzerniceControl.DEF_FONT;
 
 public class Game extends Group implements IGameSettingable {
 
     private final Engine engine;
     private final Sweeper sweeper;
     private final Text title = new Text(100, 70, "CzerniceSweeper v0.0.3-ζ");
-    private final Button settingsButton = new Button();
+    private final CzerniceControl<Button> settingsButton = new CzerniceControl<>(new Button());
     private final ImageView titleImage = new ImageView(Textures.LOGO);
 
 
@@ -42,17 +37,26 @@ public class Game extends Group implements IGameSettingable {
         this.gameSettings.mineCountProperty().addListener((obs, oldVal, newVal) -> sweeper.setMineCount((Integer) newVal));
         setupUI();
 
-        CheckBox hardModeCheckBox = new CheckBox("Hard moed");
+
+        CzerniceControl<CheckBox> hardModeCheckBox = new CzerniceControl<>(new CheckBox("Hard moed"));
         hardModeCheckBox.setLayoutX(1100);
         hardModeCheckBox.setLayoutY(260);
-        hardModeCheckBox.setFont(Font.font("impact", 20));
+        hardModeCheckBox.main.setFont(Font.font(DEF_FONT, 20));
         hardModeCheckBox.setPrefSize(150, 60);
-        hardModeCheckBox.setBackground(Background.fill(Utils.randomColor()));
-        hardModeCheckBox.selectedProperty().addListener((observable, oldValue, newValue) -> {
+        hardModeCheckBox.main.selectedProperty().addListener((observable, oldValue, newValue) -> {
             sweeper.setHardMode(newValue);
         });
 
 
+
+
+
+        //button.setLayoutX(100);
+        //button.setLayoutY(20);
+        //button.setPrefSize(256, 32);
+        //button.setScaleShape(true);
+        //button.setScaleX(0.5);
+        //button.setScaleY(0.5);
 
         /*
         Button winButton = new Button("Win");
@@ -78,27 +82,25 @@ public class Game extends Group implements IGameSettingable {
     }
 
     private void setupUI() {
-        title.setFont(Font.font("impact", 50));
+        title.setFont(Font.font(20));
         title.setFill(Utils.randomColor());
-        //titleImage.setScaleX(2);
         titleImage.setX(100);
         titleImage.setY(5);
 
 
-        settingsButton.setText("Settignes");
+        settingsButton.main.setText("Settignes");
         settingsButton.setLayoutX(1000);
         settingsButton.setLayoutY(200);
         settingsButton.setPrefSize(170, 30);
-        settingsButton.setFont(Font.font("impact", 20));
-        settingsButton.setBackground(Background.fill(Utils.randomColor()));
-        settingsButton.setOnMouseClicked(e -> gameSettings.getStage().setScene(gameSettings.getSettingsScene()));
+        settingsButton.main.setFont(Font.font(DEF_FONT, 15));
+        settingsButton.main.setOnMouseClicked(e -> gameSettings.getStage().setScene(gameSettings.getSettingsScene()));
 
         setupMusicUI();
     }
 
     private void setupMusicUI() {
         Text currSongText = new Text("Now deploying: ");
-        currSongText.setFont(new Font("impact", 20));
+        currSongText.setFont(new Font(20));
         currSongText.setFill(Utils.randomColor());
         currSongText.setX(50);
         currSongText.setY(730);
@@ -107,21 +109,21 @@ public class Game extends Group implements IGameSettingable {
                     System.out.println("CHANGED SONGG");
         });
 
-        Button pauseButton = new Button("Pouz");
-        pauseButton.setFont(new Font("impact", 15));
-        pauseButton.setBackground(Background.fill(randomColor()));
+        CzerniceControl<Button> pauseButton = new CzerniceControl<>(new Button("Pouz"));
+        pauseButton.main.setFont(Font.font(DEF_FONT, 15));
+        pauseButton.setPrefSize(50, 20);
         pauseButton.setLayoutX(50);
         pauseButton.setLayoutY(770);
-        pauseButton.setOnMouseClicked(e -> {
+        pauseButton.main.setOnMouseClicked(e -> {
             gameSettings.getBackgroundMusicPlayer().pause();
         });
 
-        Button skipButton = new Button("Skip");
-        skipButton.setFont(new Font("impact", 15));
-        skipButton.setBackground(Background.fill(randomColor()));
+        CzerniceControl<Button> skipButton = new CzerniceControl<>(new Button( "Skeep"));
+        skipButton.main.setFont(Font.font(DEF_FONT, 15));
+        skipButton.setPrefSize(70, 20);
         skipButton.setLayoutX(100);
         skipButton.setLayoutY(770);
-        skipButton.setOnMouseClicked(e -> {
+        skipButton.main.setOnMouseClicked(e -> {
             gameSettings.getBackgroundMusicPlayer().skip();
         });
 

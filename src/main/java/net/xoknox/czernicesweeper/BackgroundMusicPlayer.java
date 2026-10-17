@@ -141,7 +141,7 @@ public class BackgroundMusicPlayer implements IGameSettingable {
 
     private String[] getRandomSong() {
 
-        return songs.get(Utils.randIntRange(0, songs.size() - 1));
+        return songs.get(Utils.randIntRange(0, songs.size()));
     }
 
     private void getMusic() {

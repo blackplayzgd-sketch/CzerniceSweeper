@@ -5,11 +5,13 @@ import javafx.beans.property.SimpleObjectProperty;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.CheckBox;
+import javafx.scene.effect.ColorAdjust;
 import javafx.scene.image.Image;
 import javafx.scene.layout.Background;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Shape;
+import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
 import java.net.URL;
 import java.util.*;
@@ -19,6 +21,7 @@ public class Utils {
     public static final int[] WINDOW_CENTER = new int[2];
     public static final int MINE_COUNT = 110;
     public static final ArrayList<Node> NO_PAINT = new ArrayList<>();
+    public static final ArrayList<CzerniceControl<?>> CZERNICE = new ArrayList<>();
 
     private static final Property<Color> color = new SimpleObjectProperty<>(Color.WHEAT);
 
@@ -43,7 +46,11 @@ public class Utils {
     public static void randomizeColorsInParent(Parent input) {
         for (Node node : input.getChildrenUnmodifiable()) {
             if (NO_PAINT.contains(node)) return;
+
             if (node instanceof Region region) {
+                if (region instanceof CzerniceControl<?> cc) {
+                    cc.setCoolBG();
+                } else
                 if (region instanceof CheckBox checkBox) {
                     checkBox.setBackground(Background.fill(randomColor()));
                     continue;
@@ -52,15 +59,16 @@ public class Utils {
                 }
 
             }
+
             try {
                 if (node instanceof Shape shape) {
-
                     shape.setFill(randomColor());
                 }
             } catch (RuntimeException e) {
                 continue;
             }
-            if (node instanceof Parent parent) randomizeColorsInParent(parent);
+
+            if (node instanceof Parent parent && !(node instanceof CzerniceControl<?>)) randomizeColorsInParent(parent);
         }
     }
 
@@ -91,8 +99,12 @@ public class Utils {
 
         return output;
     }
-
     public static double fracOfRange(double x, double y, double p) {
         return x + p * (y - x);
+    }
+
+    public static ColorAdjust randomColorAdjust() {
+        //return new ColorAdjust(Math.random(), Math.random() * 2 - 1, Math.random() * 2 - 1, 0);
+        return new ColorAdjust(Math.random() * 2 - 1, 0, 0, 0);
     }
 }

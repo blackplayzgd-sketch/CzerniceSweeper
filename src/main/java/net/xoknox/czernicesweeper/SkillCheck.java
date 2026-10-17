@@ -12,6 +12,7 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
+import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
 public class SkillCheck extends Group {
     private final Rectangle marker = new Rectangle(2, 15);
@@ -50,11 +51,12 @@ public class SkillCheck extends Group {
             }
         };
 
-        Button clickButton = new Button("Checc");
+        CzerniceControl<Button> clickButton = new CzerniceControl<>(new Button("Checc"));
+        clickButton.setPrefSize(60, 10);
         clickButton.setLayoutX(width / 2);
         clickButton.setLayoutY(15);
 
-        clickButton.setOnMousePressed(event -> {
+        clickButton.main.setOnMousePressed(event -> {
             System.out.println("clicked.");
             if (event.isPrimaryButtonDown()) click();
         });

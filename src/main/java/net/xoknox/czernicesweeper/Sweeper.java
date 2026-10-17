@@ -14,6 +14,7 @@ import lombok.Setter;
 import net.xoknox.czernicesweeper.event.RemainingMinesChangedEvent;
 import net.xoknox.czernicesweeper.event.TimeUnitChangedEvent;
 import net.xoknox.czernicesweeper.event.WinEvent;
+import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
 import java.util.ArrayList;
 
@@ -23,7 +24,7 @@ public class Sweeper extends Group {
     public static final int CELL_SIZE = 30;
 
     private final Button clickButton = new Button();
-    private final Button resetButton = new Button("Reset Le Boord Boii");
+    private final CzerniceControl<Button> resetButton = new CzerniceControl<>(new Button("Reset Le Boord Boii"));
     private final Text mineText = new Text("Mines left: " + MINE_COUNT);
     private final ImageView winView = new ImageView(Textures.WIN);
     public final TextTimer timer = new TextTimer("Time elapsed: %e %s", Units.HOUR);
@@ -76,6 +77,8 @@ public class Sweeper extends Group {
 
         if (!playing) timer.stop();
         else timer.start();
+
+
 
     }
 
@@ -148,6 +151,7 @@ public class Sweeper extends Group {
         t = 0;
         timer.reset();
         timer.stop();
+        winView.setVisible(false);
 
         ArrayList<Node> toRemove = new ArrayList<>();
         for (Node child : getChildren()) {
@@ -418,9 +422,9 @@ public class Sweeper extends Group {
 
         resetButton.setLayoutX(1000);
         resetButton.setLayoutY(100);
-        resetButton.setFont(Font.font("impact", 30));
-        resetButton.setBackground(Background.fill(Utils.randomColor()));
-        resetButton.setOnMouseClicked(e -> {
+        resetButton.main.setFont(Font.font("impact", 30));
+        resetButton.setPrefSize(280, 80);
+        resetButton.main.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY) {
                 System.out.println("clllick!");
                 winView.setVisible(false);
