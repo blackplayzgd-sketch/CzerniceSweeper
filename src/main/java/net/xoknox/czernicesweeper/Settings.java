@@ -18,19 +18,21 @@ public class Settings extends Pane implements IGameSettingable {
     private final CzerniceControl<TextField> heightInput;
     private final CzerniceControl<TextField> mineCountInput;
     private final Menu timeMenu = new Menu("Time unit");
-
+    private final ImageView bg = new ImageView();
 
     public Settings(GameSettings settings) {
         this.setBackground(new Background(new BackgroundImage(
-                Textures.SETTINGS_BG_2,
+                Textures.SETTINGS_BG,
                 BackgroundRepeat.REPEAT,
                 BackgroundRepeat.REPEAT,
                 BackgroundPosition.CENTER,
                 BackgroundSize.DEFAULT
         )));
-        ImageView bg = new ImageView(Textures.SETTINGS_BG);
+
+        bg.setImage(Textures.SETTINGS_BG);
         bg.setFitWidth(WINDOW_SIZE[0]);
         bg.setFitHeight(WINDOW_SIZE[1]);
+        System.out.println(Textures.SETTINGS_BG.getWidth());
 
 
 
@@ -40,11 +42,13 @@ public class Settings extends Pane implements IGameSettingable {
             public void step(double dt) {
                 t += 2 * dt;
 
-                double sx = (Math.cos(t) + 1) / 2;
+                double sx = (Math.sin(t) + 1) / 2;
                 double sy = (Math.sin(t) + 1) / 2;
 
+
+
                 bg.setScaleX(fracOfRange(1, 1.4, sx));
-                bg.setScaleY(fracOfRange(1.4, 1, sx));
+                bg.setScaleY(fracOfRange(1.4, 1, sy));
 
                 t %= 2 * Math.PI;
             }
@@ -105,6 +109,8 @@ public class Settings extends Pane implements IGameSettingable {
             gameSettings.getSettingsScene().setFill(randomColor());
             Utils.randomizeColorsInParent(gameSettings.getGameScene().getRoot());
             Utils.randomizeColorsInParent(gameSettings.getSettingsScene().getRoot());
+            Settings.this.bg.setEffect(Utils.randomColorAdjust());
+            gameSettings.getGame().getBg().setEffect(Utils.randomColorAdjust());
         });
 
         CzerniceControl<Label> musicLabel = new CzerniceControl<>(new Label("Musik"));
@@ -171,6 +177,19 @@ public class Settings extends Pane implements IGameSettingable {
         supernovaButton.setPrefSize(120, 30);
         supernovaButton.main.setOnMouseClicked(e -> {
             CzerniceControl.toggleSupernovaMode();
+            ImageView mainBg = gameSettings.getGame().getBg();
+            if (mainBg.getImage() == Textures.MAIN_BG) {
+                mainBg.setImage(Textures.MAIN_BG_SUPERNOVA);
+            } else {
+                mainBg.setImage(Textures.MAIN_BG);
+            }
+
+            if (bg.getImage() == Textures.SETTINGS_BG) {
+                bg.setImage(Textures.SETTINGS_BG_SUPERNOVA);
+            } else {
+                bg.setImage(Textures.SETTINGS_BG);
+            }
+
         });
 
 

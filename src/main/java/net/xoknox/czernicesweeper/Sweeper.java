@@ -7,6 +7,7 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.Background;
+import javafx.scene.layout.StackPane;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import lombok.Getter;
@@ -31,6 +32,10 @@ public class Sweeper extends Group {
 
     private final int posX;
     private final int posY;
+
+    private final ArrayList<ArrayList<Node>> renderLayers = new ArrayList<>(2);
+
+    private SkillCheck skillCheck;
 
     private int width;
     private int height;
@@ -96,8 +101,8 @@ public class Sweeper extends Group {
     private void spawnSkillCheck() {
         if (Math.random() > 0.5) {
             playing = false;
-            SkillCheck skillCheck = new SkillCheck(180,Utils.fracOfRange(100, 400, getRevealedFractionNoMines()), Utils.fracOfRange(100, 10, getRevealedFractionNoMines()));
-            skillCheck.setLayoutX(1000);
+            skillCheck = new SkillCheck(180,Utils.fracOfRange(100, 400, getRevealedFractionNoMines()), Utils.fracOfRange(100, 10, getRevealedFractionNoMines()));
+            skillCheck.setLayoutX(400);
             skillCheck.setLayoutY(400);
             skillCheck.winProperty().addListener((observable, oldValue, newValue) -> {
                 playing = true;
@@ -127,10 +132,10 @@ public class Sweeper extends Group {
                 die();
             }
         } else {
+            revealTile(x, y);
             if (hardMode && clickedBgPlayer) {
                 spawnSkillCheck();
             }
-            revealTile(x, y);
         }
 
         hasClicked = true;
@@ -496,8 +501,9 @@ public class Sweeper extends Group {
     private void updateBoardVisuals() {
         this.getChildren().remove(lastNode);
         this.getChildren().remove(clickButton);
-        this.getChildren().add(getNode());
-        this.getChildren().add(clickButton);
+
+        this.getChildren().add(0, getNode());
+        this.getChildren().add(0, clickButton);
     }
 
     public boolean isRevealed(int x, int y) {

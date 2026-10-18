@@ -13,10 +13,6 @@ public class Textures {
     private static final HashMap<String, Path> textures = new HashMap<>();
     private static final HashMap<String, String> texturesImage = new HashMap<>();
 
-    public static List<Image> BUTTON_TEXTURES = new ArrayList<>();
-
-
-
     public static Image HIDDEN;
     public static Image REVEALED;
 
@@ -39,11 +35,13 @@ public class Textures {
     public static Image LOGO;
 
     public static Image BUTTON_RED;
-    public static Image BUTTON_BLUE;
-    public static Image BUTTON_PINK;
 
     public static Image BUTTON_RED_SUPERNOVA;
+
+    public static Image MAIN_BG;
+    public static Image MAIN_BG_SUPERNOVA;
     public static Image SETTINGS_BG;
+    public static Image SETTINGS_BG_SUPERNOVA;
     public static Image SETTINGS_BG_2;
 
 
@@ -57,9 +55,9 @@ public class Textures {
                 "1", "2", "3", "4", "5", "6", "7", "8",
                 "win",
                 "logo",
-                "button_red", "button_pink", "button_blue",
+                "button_red",
                 "button_red_supernova",
-                "settings_bg", "settings_bg_2"
+                "main_bg","main_bg_supernova", "settings_bg", "settings_bg_supernova", "settings_bg_2"
         };
 
         for (String fileName : textureFiles) {
@@ -89,15 +87,15 @@ public class Textures {
 
         LOGO = new Image(texturesImage.get("logo"));
 
-        BUTTON_BLUE = new Image(texturesImage.get("button_blue"));
         BUTTON_RED = new Image(texturesImage.get("button_red"));
-        BUTTON_PINK = new Image(texturesImage.get("button_pink"));
 
         BUTTON_RED_SUPERNOVA = new Image(texturesImage.get("button_red_supernova"));
 
-        BUTTON_TEXTURES = List.of(BUTTON_BLUE, BUTTON_PINK, BUTTON_RED);
-
+        MAIN_BG = new Image(texturesImage.get("main_bg"));
+        MAIN_BG_SUPERNOVA = new Image(texturesImage.get("main_bg_supernova"));
         SETTINGS_BG = new Image(texturesImage.get("settings_bg"));
+        SETTINGS_BG_SUPERNOVA = new Image(texturesImage.get("settings_bg_supernova"));
+
         SETTINGS_BG_2 = new Image(texturesImage.get("settings_bg_2"));
     }
 }

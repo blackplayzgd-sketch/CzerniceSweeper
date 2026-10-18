@@ -105,6 +105,6 @@ public class Utils {
 
     public static ColorAdjust randomColorAdjust() {
         //return new ColorAdjust(Math.random(), Math.random() * 2 - 1, Math.random() * 2 - 1, 0);
-        return new ColorAdjust(Math.random() * 2 - 1, 0, 0, 0);
+        return new ColorAdjust(Math.random() * 2 - 1, 0, 0, Math.random() * 2 - 1);
     }
 }

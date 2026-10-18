@@ -4,26 +4,60 @@ import javafx.scene.Group;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.*;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
+import lombok.Getter;
 import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
-import static net.xoknox.czernicesweeper.Utils.MINE_COUNT;
+import static net.xoknox.czernicesweeper.Utils.*;
+import static net.xoknox.czernicesweeper.Utils.fracOfRange;
 import static net.xoknox.czernicesweeper.ui.CzerniceControl.DEF_FONT;
 
-public class Game extends Group implements IGameSettingable {
+public class Game extends Pane implements IGameSettingable {
 
     private final Engine engine;
     private final Sweeper sweeper;
     private final Text title = new Text(100, 70, "CzerniceSweeper v0.0.3-ζ");
     private final CzerniceControl<Button> settingsButton = new CzerniceControl<>(new Button());
     private final ImageView titleImage = new ImageView(Textures.LOGO);
+    @Getter
+    private final ImageView bg = new ImageView();
 
 
     private GameSettings gameSettings;
 
     public Game(GameSettings settings) {
         this.gameSettings = settings;
+
+        this.setBackground(new Background(new BackgroundImage(
+                Textures.MAIN_BG,
+                BackgroundRepeat.REPEAT,
+                BackgroundRepeat.REPEAT,
+                BackgroundPosition.CENTER,
+                BackgroundSize.DEFAULT
+        )));
+        bg.setImage(Textures.MAIN_BG);
+        bg.setFitWidth(WINDOW_SIZE[0]);
+        bg.setFitHeight(WINDOW_SIZE[1]);
+        getChildren().add(bg);
+
+        DtAnimationTimer timer = new DtAnimationTimer() {
+            double t = 0;
+            @Override
+            public void step(double dt) {
+                t += 2 * dt;
+
+                double sx = (Math.cos(t) + 1) / 2;
+                double sy = (Math.sin(t) + 1) / 2;
+
+                bg.setScaleX(fracOfRange(1, 1.4, sx));
+                bg.setScaleY(fracOfRange(1.4, 1,sx));
+
+                t %= 2 * Math.PI;
+            }
+        };
+        timer.start();
 
         this.engine = new Engine(1000, 300, 40, 120, 10, 50, 60);
         engine.timer.start();

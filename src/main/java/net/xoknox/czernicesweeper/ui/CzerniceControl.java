@@ -22,6 +22,7 @@ public class CzerniceControl<T extends Control> extends StackPane implements ICz
     private ImageView bg = new ImageView();
 
     private static final ArrayList<CzerniceControl<?>> czernice = new ArrayList<>();
+    private static boolean supernovaMode = false;
 
 
     public CzerniceControl(T main) {
@@ -31,9 +32,7 @@ public class CzerniceControl<T extends Control> extends StackPane implements ICz
             labeled.setFont(Font.font(DEF_FONT, labeled.getFont().getSize()));
         };
         bg.setPreserveRatio(false);
-        bg.setImage(Textures.BUTTON_RED);
-
-
+        bg.setImage(supernovaMode ? Textures.BUTTON_RED_SUPERNOVA : Textures.BUTTON_RED);
 
         main.setPrefSize(100, 50);
         bg.setFitWidth(100);
@@ -61,12 +60,9 @@ public class CzerniceControl<T extends Control> extends StackPane implements ICz
     }
 
     public static void toggleSupernovaMode() {
+        supernovaMode = !supernovaMode;
         for (CzerniceControl<?> cc : czernice) {
-            if (cc.bg.getImage() == Textures.BUTTON_RED) {
-                cc.bg.setImage(Textures.BUTTON_RED_SUPERNOVA);
-            } else {
-                cc.bg.setImage(Textures.BUTTON_RED);
-            }
+            cc.bg.setImage(supernovaMode ? Textures.BUTTON_RED_SUPERNOVA : Textures.BUTTON_RED);
         }
     }
 }
