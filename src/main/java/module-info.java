@@ -4,6 +4,7 @@ module net.xoknox.czernicesweeper {
     requires javafx.media;
     requires static lombok;
     requires jdk.jshell;
+    requires jdk.unsupported;
 
 
     opens net.xoknox.czernicesweeper to javafx.fxml;

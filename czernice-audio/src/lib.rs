@@ -1,16 +1,20 @@
 mod engine;
 mod playback;
 
+use std::alloc::Layout;
+use std::ffi::c_void;
+use std::ptr;
+use crate::engine::{CzerniceAudioEngine, CzerniceSoundCreateInfo};
+use crate::playback::{with_czernice_playback, with_czernice_playback_faulty, CzernicePlayback, EqBandInfo, EqBandModificationSubmitInfo, EqGainModificationSubmitInfo};
 use jni::errors::{Error, LogErrorAndDefault};
-use jni::objects::JClass;
-use jni::sys::{jboolean, jbyteArray, jfloat, jint, jlong};
-use jni::{EnvUnowned, jni_sig, jni_str};
+use jni::objects::{JByteBuffer, JClass};
+use jni::sys::{jboolean, jfloat, jint, jlong, jobject};
+use jni::{jni_sig, jni_str, EnvUnowned};
+use libc::size_t;
 use maudio::MaResult;
 use mvutils::lazy;
 use mvutils::version::Version;
 use paste::paste;
-use crate::engine::{with_czernice_engine, CzerniceAudioEngine, ENGINES};
-use crate::playback::{with_czernice_playback, with_czernice_playback_faulty};
 
 pub trait OrDefaultWithError<T> {
     fn or_default_with_err(self, default: T) -> T;
@@ -96,90 +100,139 @@ czernicefn! {
     }
 
     fn ncreateEngine(_env, _class) -> jlong {
-        CzerniceAudioEngine::new().or_default_with_err(0).cast_signed()
+        CzerniceAudioEngine::new().map(|sth| sth.addr() as jlong).or_default_with_err(0)
     }
 
-    fn nretireEngine(_env, _class, engine: jlong) -> jboolean {
-        ENGINES.lock().remove(&engine.cast_unsigned()).is_some()
+    fn nretireEngine(_env, _class, engine: jlong) {
+        let engine = unsafe { &mut *(engine.cast_unsigned() as *mut CzerniceAudioEngine) };
+        CzerniceAudioEngine::retire_engine(engine)
     }
 
-    fn ncreateSound(env, _class, engine: jlong, bytes: jbyteArray) -> jlong {
-        env.with_env::<_, jlong, Error>(|e| {
-            let array = unsafe { jni::objects::JByteArray::from_raw(e, bytes) };
-            let data = e.convert_byte_array(&array)?;
-            Ok(with_czernice_engine(engine, |engine| {
-                engine.create_sound(&data)
-            }).or_default_with_err(0).cast_signed())
-        }).resolve::<LogErrorAndDefault>()
+    fn ncreateSound(_env, _class, engine: jlong, create_info: jlong) -> jlong {
+        let ci = unsafe { &mut *(create_info.cast_unsigned() as *mut CzerniceSoundCreateInfo) };
+        let engine = unsafe { &mut *(engine.cast_unsigned() as *mut CzerniceAudioEngine) };
+
+        engine.create_sound(ci).map(|sth| sth.addr() as jlong).or_default_with_err(0)
     }
 
-    fn nretireSound(_env, _class, engine: jlong, sound: jlong) -> jboolean {
-        with_czernice_engine(engine, |engine| {
-            Ok(engine.remove_sound(sound.cast_unsigned()))
-        }).or_default_with_err(false)
+    fn nretireSound(_env, _class, sound: jlong) {
+        let sound = unsafe { &mut *(sound.cast_unsigned() as *mut CzernicePlayback) };
+        CzernicePlayback::retire_sound(sound);
     }
 
-    fn nstartSound(_env, _class, engine: jlong, sound: jlong) -> jboolean {
-        with_czernice_playback_faulty(engine, sound, |sound| sound.start()).is_ok_with_err()
+    fn nstartSound(_env, _class, sound: jlong) -> jboolean {
+        with_czernice_playback_faulty(sound, |sound| sound.start()).is_ok_with_err()
     }
 
-    fn nstopSound(_env, _class, engine: jlong, sound: jlong) -> jboolean {
-        with_czernice_playback_faulty(engine, sound, |sound| sound.stop()).is_ok_with_err()
+    fn nstopSound(_env, _class, sound: jlong) -> jboolean {
+        with_czernice_playback_faulty(sound, |sound| sound.stop()).is_ok_with_err()
     }
 
-    fn nstopFade(_env, _class, engine: jlong, sound: jlong, fade: jlong) -> jboolean {
-         with_czernice_playback_faulty(engine, sound, |sound| sound.stop_fade(fade.cast_unsigned())).is_ok_with_err()
+    fn nstopFade(_env, _class, sound: jlong, fade: jlong) -> jboolean {
+         with_czernice_playback_faulty(sound, |sound| sound.stop_fade(fade.cast_unsigned())).is_ok_with_err()
     }
 
-    fn nsetVolume(_env, _class, engine: jlong, sound: jlong, volume: jfloat) {
-        with_czernice_playback(engine, sound, |sound| sound.set_volume(volume)).simply_err()
+    fn nsetVolume(_env, _class, sound: jlong, volume: jfloat) {
+        with_czernice_playback(sound, |sound| sound.set_volume(volume)).simply_err()
     }
 
-    fn nsetSpeed(_env, _class, engine: jlong, sound: jlong, speed: jfloat) {
-        with_czernice_playback(engine, sound, |sound| sound.set_speed(speed)).simply_err()
+    fn nsetSpeed(_env, _class, sound: jlong, speed: jfloat) {
+        with_czernice_playback(sound, |sound| sound.set_speed(speed)).simply_err()
     }
 
-    fn nsetBalance(_env, _class, engine: jlong, sound: jlong, balance: jfloat) {
-        with_czernice_playback(engine, sound, |sound| sound.set_balance(balance)).simply_err()
+    fn nsetBalance(_env, _class, sound: jlong, balance: jfloat) {
+        with_czernice_playback(sound, |sound| sound.set_balance(balance)).simply_err()
     }
 
-    fn nsetDoppler(_env, _class, engine: jlong, sound: jlong, doppler: jfloat) {
-        with_czernice_playback(engine, sound, |sound| sound.set_doppler(doppler)).simply_err()
+    fn nsetDoppler(_env, _class, sound: jlong, doppler: jfloat) {
+        with_czernice_playback(sound, |sound| sound.set_doppler(doppler)).simply_err()
     }
 
-    fn nsetRolloff(_env, _class, engine: jlong, sound: jlong, rolloff: jfloat) {
-        with_czernice_playback(engine, sound, |sound| sound.set_rolloff(rolloff)).simply_err()
+    fn nsetRolloff(_env, _class, sound: jlong, rolloff: jfloat) {
+        with_czernice_playback(sound, |sound| sound.set_rolloff(rolloff)).simply_err()
     }
 
-    fn nsetWet(_env, _class, engine: jlong, sound: jlong, wet: jfloat) {
-        with_czernice_playback(engine, sound, |sound| sound.set_wet(wet)).simply_err()
+    fn nsetWet(_env, _class, sound: jlong, wet: jfloat) {
+        with_czernice_playback(sound, |sound| sound.set_wet(wet)).simply_err()
     }
 
-    fn nsetDry(_env, _class, engine: jlong, sound: jlong, dry: jfloat) {
-        with_czernice_playback(engine, sound, |sound| sound.set_dry(dry)).simply_err()
+    fn nsetDry(_env, _class, sound: jlong, dry: jfloat) {
+        with_czernice_playback(sound, |sound| sound.set_dry(dry)).simply_err()
     }
 
-    fn nsetDecayFrames(_env, _class, engine: jlong, sound: jlong, decay_frames: jfloat) {
-        with_czernice_playback(engine, sound, |sound| sound.set_decay_frames(decay_frames)).simply_err()
+    fn nsetDecayFrames(_env, _class, sound: jlong, decay_frames: jfloat) {
+        with_czernice_playback(sound, |sound| sound.set_decay_frames(decay_frames)).simply_err()
     }
 
-    fn nisPlaying(_env, _class, engine: jlong, sound: jlong) -> jboolean {
-        with_czernice_playback(engine, sound, |sound| sound.is_playing()).or_default_with_err(false)
+    fn nisPlaying(_env, _class, sound: jlong) -> jboolean {
+        with_czernice_playback(sound, |sound| sound.is_playing()).or_default_with_err(false)
     }
 
-     fn nsetLooping(_env, _class, engine: jlong, sound: jlong, looping: jboolean) {
-        with_czernice_playback(engine, sound, |sound| sound.set_looping(looping)).simply_err()
+     fn nsetLooping(_env, _class, sound: jlong, looping: jboolean) {
+        with_czernice_playback(sound, |sound| sound.set_looping(looping)).simply_err()
     }
 
-    fn nsetEq(_env, _class, engine: jlong, sound: jlong, band: jint, gain: jfloat) {
-        with_czernice_playback(engine, sound, |sound| sound.set_eq(band as usize, gain)).simply_err()
+    fn nsetEqGain(_env, _class, sound: jlong, gain_submit_info: jlong) {
+        let eq_gain_submit_info = unsafe { &mut *(gain_submit_info.cast_unsigned() as *mut EqGainModificationSubmitInfo) };
+        with_czernice_playback(sound, |sound| sound.set_eq_gain(eq_gain_submit_info)).simply_err()
     }
 
-    fn nsetSampleRateReduction(_env, _class, engine: jlong, sound: jlong, reduction: jint) {
-        with_czernice_playback(engine, sound, |sound| sound.set_sample_rate_reduction(reduction as u32)).simply_err()
+    fn nsetEqBand(_env, _class, sound: jlong, band_submit_info: jlong) {
+        let eq_band_submit_info = unsafe { &mut *(band_submit_info.cast_unsigned() as *mut EqBandModificationSubmitInfo) };
+        with_czernice_playback(sound, |sound| sound.set_eq_band(eq_band_submit_info)).simply_err()
     }
 
-    fn nsetBitDepth(_env, _class, engine: jlong, sound: jlong, depth: jint) {
-        with_czernice_playback(engine, sound, |sound| sound.set_bit_depth(depth as u32)).simply_err()
+    fn ngetEqBandInfo(_env, _class, sound: jlong, count: jlong, band_info: jlong) {
+        let count_ptr = unsafe { &mut *(count.cast_unsigned() as *mut usize) };
+        let band_info_ptr = unsafe { &mut *(band_info.cast_unsigned() as *mut EqBandInfo) };
+        with_czernice_playback(sound, |sound| sound.get_eq_band_info(count_ptr, band_info_ptr)).simply_err()
+    }
+
+    fn nsetSampleRateReduction(_env, _class, sound: jlong, reduction: jint) {
+        with_czernice_playback(sound, |sound| sound.set_sample_rate_reduction(reduction as u32)).simply_err()
+    }
+
+    fn nsetBitDepth(_env, _class, sound: jlong, depth: jint) {
+        with_czernice_playback(sound, |sound| sound.set_bit_depth(depth as u32)).simply_err()
+    }
+
+    fn getPointerSize(_env, _class) -> jint {
+        size_of::<*const u32>() as jint
+    }
+
+    fn nmemAlloc(_env, _class, size: jlong) -> jlong {
+        unsafe {
+            libc::malloc(size as size_t).addr() as jlong
+        }
+    }
+
+    fn nmemCalloc(_env, _class, nobj: jlong, size: jlong) -> jlong {
+        unsafe {
+            libc::calloc(nobj as usize, size as usize).addr() as jlong
+        }
+    }
+
+    fn nmemFree(_env, _class, address: jlong) {
+        unsafe {
+            libc::free(address as *mut _)
+        }
+    }
+
+    fn nmemAddress(env, _class, buffer: jobject) -> jlong {
+        unsafe {
+            env.with_env(|a| {
+                a.get_direct_buffer_address(&JByteBuffer::from_raw(a, buffer)).map(|addr| addr as jlong)
+            }).resolve::<LogErrorAndDefault>()
+        }
+    }
+
+    fn nmemByteBuffer(env, _class, address: jlong, capacity: jint) -> jobject {
+        unsafe {
+            env.with_env(|a| {
+                Ok::<_, Error>(a.new_direct_byte_buffer(address as *mut u8, capacity as usize)
+                    .map(|buffer| buffer.into_raw())
+                    .unwrap_or(std::ptr::null_mut()))
+            }).resolve::<LogErrorAndDefault>()
+        }
     }
 }

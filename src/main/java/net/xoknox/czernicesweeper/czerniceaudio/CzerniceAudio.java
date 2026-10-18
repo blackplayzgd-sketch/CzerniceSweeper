@@ -1,6 +1,8 @@
 package net.xoknox.czernicesweeper.czerniceaudio;
 
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -62,26 +64,39 @@ public class CzerniceAudio {
     public static native long ncreateEngine();
     public static native boolean nretireEngine(long engine);
 
-    public static native long ncreateSound(long engine, byte[] soundBytes);
-    public static native boolean nretireSound(long engine, long sound);
+    public static native long ncreateSound(long engine, long create_info);
+    public static native boolean nretireSound(long sound);
 
-    public static native boolean nstartSound(long engine, long sound);
-    public static native boolean nstopSound(long engine, long sound);
-    public static native boolean nstopFade(long engine, long sound, long fadeMollis);
-    public static native boolean nisPlaying(long engine, long sound);
-    public static native void nsetLooping(long engine, long sound, boolean looping);
+    public static native boolean nstartSound(long sound);
+    public static native boolean nstopSound(long sound);
+    public static native boolean nstopFade(long sound, long fadeMollis);
+    public static native boolean nisPlaying(long sound);
+    public static native void nsetLooping(long sound, boolean looping);
 
-    public static native void nsetVolume(long engine, long sound, float volume);
-    public static native void nsetSpeed(long engine, long sound, float speed);
-    public static native void nsetBalance(long engine, long sound, float balance);
-    public static native void nsetDoppler(long engine, long sound, float doppler);
-    public static native void nsetRolloff(long engine, long sound, float rolloff);
-    public static native void nsetWet(long engine, long sound, float wet);
-    public static native void nsetDry(long engine, long sound, float dry);
-    public static native void nsetDecayFrames(long engine, long sound, float decay);
+    public static native void nsetVolume(long sound, float volume);
+    public static native void nsetSpeed(long sound, float speed);
+    public static native void nsetBalance(long sound, float balance);
+    public static native void nsetDoppler(long sound, float doppler);
+    public static native void nsetRolloff(long sound, float rolloff);
+    public static native void nsetWet(long sound, float wet);
+    public static native void nsetDry(long sound, float dry);
+    public static native void nsetDecayFrames(long sound, float decay);
 
-    public static native void nsetSampleRateReduction(long engine, long sound, int reduction);
-    public static native void nsetBitDepth(long engine, long sound, int depth);
+    public static native void nsetSampleRateReduction(long sound, int reduction);
+    public static native void nsetBitDepth(long sound, int depth);
 
-    public static native void nsetEq(long engine, long sound, int band, float gain);
+    public static native void nsetEqGain(long sound, long gain_submit_info);
+    public static native void nsetEqBand(long sound, long band_submit_info);
+
+    public static native void ngetEqBandInfo(long sound, long count_ptr, long band_info_ptr);
+
+    public static native int getPointerSize();
+
+    public static native long nmemAlloc(long size);
+    public static native long nmemCalloc(long nobj, long size);
+    public static native void nmemFree(long address);
+
+    public static native long nmemAddress(ByteBuffer buffer);
+
+    public static native ByteBuffer nmemByteBuffer(long address, int capacity);
 }

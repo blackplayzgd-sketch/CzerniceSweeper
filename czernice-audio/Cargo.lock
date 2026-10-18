@@ -180,9 +180,9 @@ name = "czernice-audio"
 version = "0.1.0"
 dependencies = [
  "jni",
+ "libc",
  "maudio",
  "mvutils",
- "parking_lot",
  "paste",
 ]
 

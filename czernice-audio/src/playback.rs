@@ -1,4 +1,5 @@
-use crate::engine::with_czernice_engine;
+use std::ptr;
+use crate::engine::{with_czernice_engine, CzerniceAudioEngine};
 use maudio::engine::node_graph::node_on_process::{EffectCallback, InputBusses, OutputBusses};
 use maudio::engine::node_graph::nodes::Node;
 use maudio::engine::node_graph::nodes::effects::delay::DelayNode;
@@ -6,25 +7,17 @@ use maudio::engine::node_graph::nodes::filters::biquad::BiquadNode;
 use maudio::sound::Sound;
 use maudio::{MaResult, MaudioError};
 use std::sync::atomic::{AtomicU32, Ordering};
+use maudio::audio::sample_rate::SampleRate;
+use maudio::data_source::sources::decoder::{Decoder, Owned};
 
-pub fn with_czernice_playback<F, T>(engine: i64, playback: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzernicePlayback) -> T {
-    with_czernice_engine(engine, |engine| {
-        if let Some(playback) = engine.sounds.get_mut(&playback.cast_unsigned()) {
-            Ok(f(playback))
-        } else {
-            Err(MaudioError::other("CzernicePlayback not found"))
-        }
-    })
+pub fn with_czernice_playback<F, T>(playback: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzernicePlayback) -> T {
+    let playback = unsafe { &mut *(playback.cast_unsigned() as *mut CzernicePlayback) };
+    Ok(f(playback))
 }
 
-pub fn with_czernice_playback_faulty<F, T>(engine: i64, playback: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzernicePlayback) -> MaResult<T> {
-    with_czernice_engine(engine, |engine| {
-        if let Some(playback) = engine.sounds.get_mut(&playback.cast_unsigned()) {
-            f(playback)
-        } else {
-            Err(MaudioError::other("CzernicePlayback not found"))
-        }
-    })
+pub fn with_czernice_playback_faulty<F, T>(playback: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzernicePlayback) -> MaResult<T> {
+    let playback = unsafe { &mut *(playback.cast_unsigned() as *mut CzernicePlayback) };
+    f(playback)
 }
 
 pub struct CzerniceEffect {
@@ -59,20 +52,22 @@ impl EffectCallback for CzerniceEffect {
 }
 
 pub fn band_coefficients(
+    playback: &CzernicePlayback,
     band: usize,
     gain_db: f32,
-    sample_rate: f32,
+    sample_rate: i32,
 ) -> MaResult<[f64; 6]> {
     // values pulled out of my ass, may need tweaking
-    let (freq, q): (f64, f64) = match band {
-        0 => (200.0, 0.7),
-        1 => (1000.0, 1.0),
-        2 => (4000.0, 0.75),
-        _ => return Err(MaudioError::other("band index out of bounds")),
-    };
+    // let (freq, q): (f64, f64) = match band {
+    //     0 => (200.0, 0.7),
+    //     1 => (1000.0, 1.0),
+    //     2 => (4000.0, 0.75),
+    //     _ => return Err(MaudioError::other("band index out of bounds")),
+    // };
+    let EqBandInfo { frequency, q, .. } = playback.eq_info[band];
 
     let a = 10.0_f64.powf(gain_db as f64 / 40.0);
-    let w = std::f64::consts::TAU * freq / sample_rate as f64;
+    let w = std::f64::consts::TAU * frequency / sample_rate as f64;
     let alpha = w.sin() / (2.0 * q);
     let c = w.cos();
 
@@ -88,14 +83,42 @@ pub fn band_coefficients(
 
 pub struct CzernicePlayback {
     pub sound: Sound,
-    pub eq: [BiquadNode; 3],
+    pub eq: Vec<BiquadNode>,
     pub effect: Node<maudio::engine::node_graph::node_on_process::Effect<CzerniceEffect>>,
-    pub delay: DelayNode,
+    pub decoder: Decoder<f32, Owned>,
+    pub eq_info: Vec<EqBandInfo>
+}
+
+#[repr(C)]
+pub struct EqBandModificationSubmitInfo {
+    pub band: usize,
+    pub frequency: f64,
+    pub q: f64
+}
+
+#[repr(C)]
+pub struct EqGainModificationSubmitInfo {
+    pub band: usize,
+    pub gain_db: f32,
+    pub sample_rate: SampleRate
+}
+
+#[repr(C)]
+#[derive(Clone)]
+pub struct EqBandInfo {
+    pub frequency: f64,
+    pub q: f64,
+    pub gain_db: f32,
+    pub sample_rate: SampleRate
 }
 
 unsafe impl Send for CzernicePlayback {}
 
 impl CzernicePlayback {
+    pub fn retire_sound(sound: *mut CzernicePlayback) {
+        unsafe { let _ = Box::from_raw(sound); }
+    }
+
     pub fn start(&self) -> MaResult<()> {
         self.sound.play_sound()
     }
@@ -128,9 +151,34 @@ impl CzernicePlayback {
         self.sound.is_playing()
     }
 
-    pub fn set_eq(&mut self, band: usize, gain_db: f32) -> MaResult<()> {
-        let coefficients = band_coefficients(band, gain_db, 44100.0)?;
-        self.eq[band].reinit(coefficients[0], coefficients[1], coefficients[2], coefficients[3], coefficients[4], coefficients[5])
+    pub fn set_eq_gain(&mut self, si: *mut EqGainModificationSubmitInfo) -> MaResult<()> {
+        let si = unsafe { si.as_ref().unwrap() };
+
+        let coefficients = band_coefficients(self, si.band, si.gain_db, i32::from(si.sample_rate))?;
+
+        let curr: &mut EqBandInfo = &mut self.eq_info[si.band];
+        curr.gain_db = si.gain_db;
+        curr.sample_rate = si.sample_rate;
+
+        self.eq[si.band].reinit(coefficients[0], coefficients[1], coefficients[2], coefficients[3], coefficients[4], coefficients[5])
+    }
+
+    pub fn set_eq_band(&mut self, si: *mut EqBandModificationSubmitInfo) {
+        let si = unsafe { si.as_ref().unwrap() };
+
+        let curr: &mut EqBandInfo = &mut self.eq_info[si.band];
+        curr.frequency = si.frequency;
+        curr.q = si.q;
+    }
+
+    pub fn get_eq_band_info(&mut self, count: &mut usize, data: *mut EqBandInfo) {
+        if (data.is_null()) {
+            *count = self.eq_info.len();
+        } else {
+            unsafe {
+                ptr::copy(self.eq_info.as_ptr(), data, *count);
+            }
+        }
     }
 
     pub fn set_doppler(&self, doppler: f32) {
@@ -142,15 +190,15 @@ impl CzernicePlayback {
     }
 
     pub fn set_wet(&mut self, wet: f32) {
-        self.delay.set_wet(wet);
+        //self.delay.set_wet(wet);
     }
 
     pub fn set_dry(&mut self, dry: f32) {
-        self.delay.set_dry(dry);
+        //self.delay.set_dry(dry);
     }
 
     pub fn set_decay_frames(&mut self, decay_frames: f32) {
-        self.delay.set_decay_frames(decay_frames);
+        //self.delay.set_decay_frames(decay_frames);
     }
 
     pub fn set_sample_rate_reduction(&mut self, sample_rate_reduction: u32) {
