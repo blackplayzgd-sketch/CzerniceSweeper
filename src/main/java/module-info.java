@@ -10,4 +10,6 @@ module net.xoknox.czernicesweeper {
     exports net.xoknox.czernicesweeper;
     exports net.xoknox.czernicesweeper.applicationinstallation;
     opens net.xoknox.czernicesweeper.applicationinstallation to javafx.fxml;
+    exports net.xoknox.czernicesweeper.czerniceaudio;
+    opens net.xoknox.czernicesweeper.czerniceaudio to javafx.fxml;
 }

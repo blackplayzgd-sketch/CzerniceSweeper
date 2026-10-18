@@ -1,0 +1,22 @@
+[package]
+name = "czernice-audio"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = "fat"
+codegen-units = 1
+debug = false
+
+
+[dependencies]
+jni = "0.22.4"
+maudio = "0.1.15"
+mvutils = "1.7.2"
+parking_lot = "0.12.5"
+paste = "1.0.15"
