@@ -1,7 +1,6 @@
 package net.xoknox.czernicesweeper;
 
 import javafx.application.Application;
-import net.xoknox.czernicesweeper.applicationinstallation.AssetInstaller;
 
 import java.io.IOException;
 
