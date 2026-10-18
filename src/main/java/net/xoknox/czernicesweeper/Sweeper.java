@@ -12,9 +12,7 @@ import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import lombok.Getter;
 import lombok.Setter;
-import net.xoknox.czernicesweeper.event.RemainingMinesChangedEvent;
-import net.xoknox.czernicesweeper.event.TimeUnitChangedEvent;
-import net.xoknox.czernicesweeper.event.WinEvent;
+import net.xoknox.czernicesweeper.event.*;
 import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
 import java.util.ArrayList;
@@ -22,95 +20,70 @@ import java.util.ArrayList;
 import static net.xoknox.czernicesweeper.Utils.*;
 
 public class Sweeper extends Group {
-    public static final int CELL_SIZE = 30;
-
-    private final Button clickButton = new Button();
     private final CzerniceControl<Button> resetButton = new CzerniceControl<>(new Button("Reset Le Boord Boii"));
     private final Text mineText = new Text("Mines left: " + MINE_COUNT);
     private final ImageView winView = new ImageView(Textures.WIN);
     public final TextTimer timer = new TextTimer("Time elapsed: %e %s", Units.HOUR);
 
-    private final int posX;
-    private final int posY;
-
     private final ArrayList<ArrayList<Node>> renderLayers = new ArrayList<>(2);
 
     private SkillCheck skillCheck;
 
-    private int width;
-    private int height;
-    private int mineCount;
+    @Getter
+    private final SweeperBoard board;
 
-    private ArrayGrid<Boolean> mines;
-    private ArrayGrid<Boolean> flags;
-    private ArrayGrid<Boolean> revealed;
-
-    private Group lastNode;
-    private boolean hasClicked = false;
-    private boolean dead = false;
     @Getter
     @Setter
     private boolean hardMode = false;
-    private boolean playing = true;
 
     public int t = 0;
 
+    public Sweeper(int width, int height, int mineCount) {
+        this.board = new SweeperBoard(width, height, mineCount);
+        board.setLayoutX(50);
+        board.setLayoutY(100);
 
-    public Sweeper(int posX, int posY, int width, int height, int mineCount) {
-        this.posX = posX;
-        this.posY = posY;
-        this.width = width;
-        this.height = height;
-        this.mineCount = mineCount;
+        this.getChildren().addAll(mineText, resetButton, winView, timer, board);
 
-        mines = new ArrayGrid<>(width, height, false);
-        flags = new ArrayGrid<>(width, height, false);
-        revealed = new ArrayGrid<>(width, height, false);
-
-        this.getChildren().add(getNode());
-        this.getChildren().add(clickButton);
-        this.getChildren().addAll(mineText, resetButton, winView, timer);
-
-        setupClickButton();
         setupUI();
-        placeMines();
+        board.placeMines();
+
+        board.addEventHandler(BoardInteractedEvent.BOARD_INTERACTED, e -> {
+            if (hardMode && e.isByPlayer() && e.isDidRevealTiles() && !e.isRightClick()) spawnSkillCheck(e.getPos());
+            timer.start();
+        });
+        board.addEventHandler(WinEvent.WIN, e -> win());
+        board.addEventHandler(DieEvent.DIE, e -> {
+            System.out.println("recieved die");
+            die();
+        });
+
+        board.addEventHandler(BoardResetEvent.BOARD_RESET, e -> reset());
+
+        addEventHandler(
+                RemainingMinesChangedEvent.REMAINING_MINES_CHANGED,
+                e -> {
+                    mineText.setText("Mines left: " + e.getRemainingMines());
+                    System.out.println(e.getRemainingMines());
+                }
+        );
 
     }
 
-    public void pause() {
-        playing = !playing;
-
-        if (!playing) timer.stop();
-        else timer.start();
-
-
-
-    }
-
-    public double getRevealedFractionNoMines() {
-        int sum = 0;
-
-        for (int x = 0; x < width; x++) {
-            for (int y = 0; y < height; y++) {
-                if (isRevealed(x, y)) sum++;
-            }
-        }
-        return (double) sum / (width * height - mineCount);
-    }
-
-    private void spawnSkillCheck() {
+    private void spawnSkillCheck(double[] pos) {
         if (Math.random() > 0.5) {
-            playing = false;
-            skillCheck = new SkillCheck(180,Utils.fracOfRange(100, 400, getRevealedFractionNoMines()), Utils.fracOfRange(100, 10, getRevealedFractionNoMines()));
-            skillCheck.setLayoutX(400);
-            skillCheck.setLayoutY(400);
+            double width = 180;
+            board.setPlaying(false);
+            SkillCheck skillCheck = new SkillCheck(width,Utils.fracOfRange(100, 400, board.getRevealedFractionNoMines()), Utils.fracOfRange(100, 10, board.getRevealedFractionNoMines()));
+            skillCheck.setLayoutX(pos[0] + board.getLayoutX() - width / 2);
+            skillCheck.setLayoutY(pos[1] + board.getLayoutY() + 5);
             skillCheck.winProperty().addListener((observable, oldValue, newValue) -> {
-                playing = true;
+                board.setPlaying(true);
                 getChildren().remove(skillCheck);
             });
             skillCheck.loseProperty().addListener((observable, oldValue, newValue) -> {
-                playing = true;
-                die();
+                board.setPlaying(true);
+                board.die();
                 getChildren().remove(skillCheck);
             });
             skillCheck.start();
@@ -119,298 +92,26 @@ public class Sweeper extends Group {
 
     }
 
-    public void leftClick(int x, int y, boolean clickedBgPlayer) {
-        if (dead) return;
-        if (isRevealed(x, y) && clickedBgPlayer) chord(x, y);
-        if (isFlag(x, y)) return;
-
-        if (isMine(x, y)) {
-            if (!hasClicked) {
-                reset();
-                leftClick(x, y, true);
-            } else {
-                die();
-            }
-        } else {
-            revealTile(x, y);
-            if (hardMode && clickedBgPlayer) {
-                spawnSkillCheck();
-            }
-        }
-
-        hasClicked = true;
+    public void die() {
+        timer.stop();
     }
 
-    public void rightClick(int x, int y) {
-        flagTile(x, y);
+    public void win() {
+        winView.setVisible(true);
+        timer.stop();
     }
 
     public void reset() {
-        mines = new ArrayGrid<>(width, height, false);
-        flags = new ArrayGrid<>(width, height, false);
-        revealed = new ArrayGrid<>(width, height, false);
-
-        hasClicked = false;
-        dead = false;
-        playing = true;
         t = 0;
         timer.reset();
         timer.stop();
         winView.setVisible(false);
 
-        ArrayList<Node> toRemove = new ArrayList<>();
+        ArrayList<Node> toRemove = new ArrayList<>(1);
         for (Node child : getChildren()) {
             if (child instanceof SkillCheck) toRemove.add(child);
         }
         getChildren().removeAll(toRemove);
-        placeMines();
-        updateRemainingMineCount();
-        updateBoardVisuals();
-
-    }
-
-    public void die() {
-        dead = true;
-        timer.stop();
-        updateBoardVisuals();
-        System.out.println("DIED");
-    }
-
-    public void win() {
-        for (int x = 0; x < width; x++) {
-            for (int y = 0; y < height; y++) {
-                if (!isMine(x, y) && !isRevealed(x, y)) revealTile(x, y);
-            }
-        }
-        winView.setVisible(true);
-        timer.stop();
-        clickButton.fireEvent(new WinEvent());
-        updateBoardVisuals();
-    }
-
-    public void placeMines() {
-        int remaining = Math.min(mineCount, width * height);
-
-        while (remaining > 0) {
-            int x = (int) (Math.random() * width);
-            int y = (int) (Math.random() * height);
-
-            if (!isMine(x, y)) {
-                mines.set(x, y, true);
-                remaining--;
-            }
-        }
-    }
-
-    public void chord(int x, int y) {
-        System.out.println("chording!");
-        if (getFlagsAroundCount(x, y) == getMinesAroundCount(x, y)) {
-            if (hardMode && getFlagsAroundCount(x, y) + getOpenAroundCount(x, y) != 8) {
-                //spawnSkillCheck();
-            }
-            revealNeighbours(x, y);
-        }
-    }
-
-    public void revealTile(int x, int y) {
-        setRevealed(x, y, true);
-
-        if (isFlag(x, y)) flagTile(x, y);
-
-        if (!hasMineAround(x, y)) {
-            System.out.println("doesnt have mine");
-            revealNeighbours(x, y);
-        }
-
-
-    }
-
-    public void flagTile(int x, int y) {
-        if (!isRevealed(x, y)) setFlag(x, y, !flags.get(x, y));
-        updateRemainingMineCount();
-    }
-
-    private void revealNeighbours(int x, int y) {
-        for (int i = -1; i < 2; i++) {
-            for (int j = -1; j < 2; j++) {
-                if (!(i == 0 && j == 0)) {
-                    System.out.println("checking" + (x + i) + ", " + (y + j));
-                    if (x + i < 0 || x + i > mines.getWidth() - 1) continue;
-                    System.out.println("passsed if 1");
-                    if (y + j < 0 || y + j > mines.getHeight() - 1) continue;
-                    System.out.println("passed if 2");
-                    if (isRevealed(x + i, y + j)) continue;
-
-                    leftClick(x + i, y + j, false);
-
-                }
-            }
-        }
-    }
-
-    private boolean hasMineAround(int x, int y) {
-
-        for (int i = -1; i < 2; i++) {
-            for (int j = -1; j < 2; j++) {
-                if (!(i == 0 && j == 0)) {
-
-                    if (x + i < 0 || x + i > width - 1) continue;
-                    if (y + j < 0 || y + j > height - 1) continue;
-
-                    if (isMine(x + i, y + j)) return true;
-
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private boolean hasFlagAround(int x, int y) {
-
-        for (int i = -1; i < 2; i++) {
-            for (int j = -1; j < 2; j++) {
-                if (!(i == 0 && j == 0)) {
-
-                    if (x + i < 0 || x + i > width - 1) continue;
-                    if (y + j < 0 || y + j > height - 1) continue;
-
-                    if (isFlag(x + i, y + j)) return true;
-
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private int getMinesAroundCount(int x, int y) {
-        if (isMine(x, y)) return 0;
-        if (!hasMineAround(x, y)) return 0;
-
-        int sum = 0;
-
-        for (int i = -1; i < 2; i++) {
-            for (int j = -1; j < 2; j++) {
-                if (!(i == 0 && j == 0)) {
-
-                    if (x + i < 0 || x + i > width - 1) continue;
-                    if (y + j < 0 || y + j > height - 1) continue;
-
-                    if (isMine(x + i, y + j)) sum++;
-
-                }
-            }
-        }
-
-        return sum;
-    }
-
-    private int getFlagsAroundCount(int x, int y) {
-        if (!hasFlagAround(x, y)) return 0;
-
-        int sum = 0;
-
-        for (int i = -1; i < 2; i++) {
-            for (int j = -1; j < 2; j++) {
-                if (!(i == 0 && j == 0)) {
-
-                    if (x + i < 0 || x + i > width - 1) continue;
-                    if (y + j < 0 || y + j > height - 1) continue;
-
-                    if (isFlag(x + i, y + j)) sum++;
-
-                }
-            }
-        }
-
-        return sum;
-    }
-
-    private int getOpenAroundCount(int x, int y) {
-        int sum = 0;
-
-        for (int i = -1; i < 2; i++) {
-            for (int j = -1; j < 2; j++) {
-                if (!(i == 0 && j == 0)) {
-
-                    if (x + i < 0 || x + i > width - 1) continue;
-                    if (y + j < 0 || y + j > height - 1) continue;
-
-                    if (isRevealed(x + i, y + j)) sum++;
-
-                }
-            }
-        }
-
-        return sum;
-    }
-
-    private void updateRemainingMineCount() {
-        clickButton.fireEvent(new RemainingMinesChangedEvent(getRemainingMines()));
-    }
-
-    public Group getNode() {
-        Group group = new Group();
-
-
-        for (int x = 0; x < width; x++) {
-            for (int y = 0; y < height; y++) {
-                Image stateImage = isRevealed(x, y) ? Textures.REVEALED : Textures.HIDDEN;
-                Image typeImage = getTypeImageForTile(x, y);
-
-                double[] scaleState = Utils.getScaleForImage(stateImage);
-                double[] scaleType = Utils.getScaleForImage(typeImage);
-
-                ImageView stateView = new ImageView(stateImage);
-                ImageView typeView = new ImageView(typeImage);
-
-                stateView.setScaleX(scaleState[0]);
-                stateView.setScaleY(scaleState[1]);
-                stateView.setX(CELL_SIZE * x + posX);
-                stateView.setY(CELL_SIZE * y + posY);
-
-                typeView.setScaleX(scaleType[0]);
-                typeView.setScaleY(scaleType[1]);
-                typeView.setX(CELL_SIZE * x + posX);
-                typeView.setY(CELL_SIZE * y + posY);
-
-                if (!isRevealed(x, y)) {
-                    group.getChildren().add(stateView);
-                    if (isFlag(x, y)) {
-                        group.getChildren().add(typeView);
-                    } else if (isMine(x, y) && dead) {
-                        group.getChildren().add(typeView);
-                    }
-                } else {
-                    group.getChildren().add(stateView);
-                    group.getChildren().add(typeView);
-                }
-            }
-        }
-
-        lastNode = group;
-        return group;
-    }
-
-    private Image getTypeImageForTile(int x, int y) {
-        int mineAmount = getMinesAroundCount(x, y);
-
-        if (isFlag(x, y)) return Textures.FLAG;
-        if (isMine(x, y)) return Textures.MINE;
-
-        switch (mineAmount) {
-            case 1: return Textures.ONE;
-            case 2: return Textures.TWO;
-            case 3: return Textures.THREE;
-            case 4: return Textures.FOUR;
-            case 5: return Textures.FIVE;
-            case 6: return Textures.SIX;
-            case 7: return Textures.SEVEN;
-            case 8: return Textures.EIGHT;
-            default: return Textures.EMPTY;
-        }
-
     }
 
     private void setupUI() {
@@ -432,8 +133,8 @@ public class Sweeper extends Group {
         resetButton.main.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY) {
                 System.out.println("clllick!");
-                winView.setVisible(false);
                 this.reset();
+                board.reset();
             };
         });
 
@@ -450,108 +151,6 @@ public class Sweeper extends Group {
         );
     }
 
-    private void setupClickButton() {
-        Utils.NO_PAINT.add(clickButton);
-        clickButton.setLayoutX(posX);
-        clickButton.setLayoutY(posY);
-        clickButton.setPrefSize(CELL_SIZE * width, CELL_SIZE * height);
-        clickButton.setBackground(Background.EMPTY);
-        clickButton.setOnMousePressed(e -> {
-            System.out.println("CLLLLICK");
-            if (!dead && playing) {
-                int clickedX = (int) ((e.getSceneX() - this.posX) / CELL_SIZE);
-                int clickedY = (int) ((e.getSceneY() - this.posY) / CELL_SIZE);
-                if (e.getButton() == MouseButton.PRIMARY) {
-                    System.out.println("clickes!");
-                    leftClick(clickedX, clickedY, true);
-                } else if (e.getButton() == MouseButton.SECONDARY) {
-                    rightClick(clickedX, clickedY);
-                }
-                System.out.println("CLLLICK (2)");
-                if (!dead) timer.start();
-            }
-            checkWinCondition();
-            updateBoardVisuals();
 
-        });
-        clickButton.addEventHandler(
-                RemainingMinesChangedEvent.REMAINING_MINES_CHANGED,
-                e -> {
-                    mineText.setText("Mines left: " + e.getRemainingMines());
-                    System.out.println(getRemainingMines());
-                }
-        );
-        clickButton.addEventHandler(
-                WinEvent.WIN,
-                e -> {
-
-                });
-    }
-
-    private void checkWinCondition() {
-        for (int x = 0; x < width; x++) {
-            for (int y = 0; y < height; y++) {
-                if (isMine(x, y)) if (!isFlag(x, y)) return;
-                if (isFlag(x, y)) if (!isMine(x, y)) return;
-            }
-        }
-        win();
-    }
-
-    private void updateBoardVisuals() {
-        this.getChildren().remove(lastNode);
-        this.getChildren().remove(clickButton);
-
-        this.getChildren().add(0, getNode());
-        this.getChildren().add(0, clickButton);
-    }
-
-    public boolean isRevealed(int x, int y) {
-        return revealed.get(x, y);
-    }
-
-    public boolean isMine(int x, int y) {
-        return mines.get(x, y);
-    }
-
-    public boolean isFlag(int x, int y) {
-        return flags.get(x, y);
-    }
-
-    public int getRemainingMines() {
-        int sum = 0;
-        for (int x = 0; x < width; x++) {
-            for (int y = 0; y < height; y++) {
-                if (isFlag(x, y)) sum++;
-            }
-        }
-
-        return mineCount - sum;
-    }
-
-    public void setWidth(int width) {
-        this.width = width;
-        this.reset();
-
-    }
-    public void setHeight(int height) {
-        this.height = height;
-        this.reset();
-    }
-    public void setMineCount(int mineCount) {
-
-        this.mineCount = Math.min(mineCount, width * height - 1);
-        this.reset();
-    }
-
-    public void setRevealed(int x, int y, boolean value) {
-        revealed.set(x, y, value);
-
-    }
-
-    public void setFlag(int x, int y, boolean value) {
-        flags.set(x, y, value);
-
-    }
 
 }

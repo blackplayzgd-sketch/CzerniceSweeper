@@ -27,7 +27,7 @@ public class Utils {
 
     public static double[] getScaleForImage(Image image) {
         //return new double[]{image.getWidth() / Sweeper.CELL_SIZE, image.getHeight() / Sweeper.CELL_SIZE};
-        return new double[]{ Sweeper.CELL_SIZE / image.getWidth(), Sweeper.CELL_SIZE / image.getHeight()};
+        return new double[]{ SweeperBoard.CELL_SIZE / image.getWidth(), SweeperBoard.CELL_SIZE / image.getHeight()};
     }
 
     public static void init() {

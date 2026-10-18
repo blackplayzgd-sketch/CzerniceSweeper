@@ -62,13 +62,14 @@ public class Game extends Pane implements IGameSettingable {
         this.engine = new Engine(1000, 300, 40, 120, 10, 50, 60);
         engine.timer.start();
 
-        this.sweeper = new Sweeper(50, 100, 30, 20, MINE_COUNT);
+        this.sweeper = new Sweeper( 30, 20, MINE_COUNT);
+
         this.gameSettings.unitProperty().addListener((obs,oldUnit, newUnit) -> {
             sweeper.timer.setUnit(newUnit);
         });
-        this.gameSettings.widthProperty().addListener((obs, oldVal, newVal) -> sweeper.setWidth((Integer) newVal));
-        this.gameSettings.heightProperty().addListener((obs, oldVal, newVal) -> sweeper.setHeight((Integer) newVal));
-        this.gameSettings.mineCountProperty().addListener((obs, oldVal, newVal) -> sweeper.setMineCount((Integer) newVal));
+        this.gameSettings.widthProperty().addListener((obs, oldVal, newVal) -> sweeper.getBoard().setWidth((Integer) newVal));
+        this.gameSettings.heightProperty().addListener((obs, oldVal, newVal) -> sweeper.getBoard().setHeight((Integer) newVal));
+        this.gameSettings.mineCountProperty().addListener((obs, oldVal, newVal) -> sweeper.getBoard().setMineCount((Integer) newVal));
         setupUI();
 
 
