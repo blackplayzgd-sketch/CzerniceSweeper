@@ -36,7 +36,7 @@ public final class AssetInstaller {
         if (Files.exists(marker)) return;
 
         String[] songNames = new String[]{
-                "Alex Skrindo, Stahl - Moments [NCS Release].mp3",
+                "test.mp3",
                 "Cartoon, Coleman Trapp, Jéja - Why We Lose (feat. Coleman Trapp) [NCS Release](1).mp3",
                 "Cartoon, Daniel Levi, Jéja - On & On (feat. Daniel Levi) [NCS Release].mp3"
         };

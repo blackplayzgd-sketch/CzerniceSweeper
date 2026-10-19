@@ -1,0 +1,54 @@
+package ...;
+
+/**
+ *  CzerniceEqBandInfo Java Struct.
+ *
+ *  Layout:
+ *  <pre><code>
+ *  struct CzerniceEqBandInfo {
+ *      f64 frequency,
+ *      f64 q,
+ *      f32 gain_db,
+ *      u32 sample_rate
+ *  }</code></pre>
+ */
+public class CzerniceEqBandInfo extends Struct<CzerniceEqBandInfo> {
+
+    public static final int SIZEOF, ALIGNOF;
+
+    protected static final int
+                OF_FREQUENCY,
+                OF_Q,
+                OF_GAIN_DB,
+                OF_SAMPLE_RATE;
+
+    static {
+        Layout layout = __struct(
+            __member(8),
+            __member(8),
+            __member(4),
+            __member(4)
+        );
+
+        OF_FREQUENCY = layout.offsetof(0);
+        OF_Q = layout.offsetof(1);
+        OF_GAIN_DB = layout.offsetof(2);
+        OF_SAMPLE_RATE = layout.offsetof(3);
+
+        SIZEOF = layout.getSize();
+        ALIGNOF = layout.getAlignment()
+    }
+
+    public CzerniceEqBandInfo(long address, @Nullable ByteBuffer container) {
+        super(address, container);
+    }
+
+    @Override
+    protected CzerniceEqBandInfo create(long address, @Nullable ByteBuffer container) {
+        return new CzerniceEqBandInf(address, __verify(container, SIZEOF));
+    }
+
+    @Override
+    public int sizeof() { return SIZEOF; }
+
+}

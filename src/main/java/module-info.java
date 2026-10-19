@@ -5,6 +5,7 @@ module net.xoknox.czernicesweeper {
     requires static lombok;
     requires jdk.jshell;
     requires jdk.unsupported;
+    requires org.jetbrains.annotations;
 
 
     opens net.xoknox.czernicesweeper to javafx.fxml;

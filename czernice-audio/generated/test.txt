@@ -1,0 +1,6 @@
+#[repr(C)] pub struct CzerniceSoundCreateInfo
+{
+    pub data_ptr: usize, pub data_len: usize, pub sample_rate: u32, pub
+    channels: u32, pub reverb_delay: f32, pub num_filters: usize, pub
+    eq_info_ptr: usize, pub eq_info_len: usize,
+}

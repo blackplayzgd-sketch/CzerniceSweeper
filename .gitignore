@@ -40,3 +40,5 @@ build/
 
 czernice-audio/target
 czernice-audio/.idea
+
+AudioTest.java

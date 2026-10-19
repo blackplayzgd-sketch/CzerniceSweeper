@@ -5,6 +5,7 @@ import java.nio.ByteOrder;
 import java.nio.IntBuffer;
 
 import static net.xoknox.czernicesweeper.czerniceaudio.CzerniceAudio.*;
+import static net.xoknox.czernicesweeper.czerniceaudio.mem.MemoryUtil.*;
 
 public final class MemoryStack implements AutoCloseable {
     private static final int DEFAULT_SIZE = 1024 * 1024;
@@ -20,7 +21,7 @@ public final class MemoryStack implements AutoCloseable {
         }
 
         this.capacity = capacity;
-        this.baseAddress = nmemAlloc(capacity);
+        this.baseAddress = nmalloc(capacity);
 
         if (baseAddress == 0) {
             throw new OutOfMemoryError("Native allocation failed");
@@ -35,7 +36,7 @@ public final class MemoryStack implements AutoCloseable {
         return malloc(size, 8);
     }
 
-    public long malloc(int size, int alignment) {
+    public long malloc(int alignment, int size) {
         ensureOpen();
 
         if (size < 0) {
@@ -72,17 +73,21 @@ public final class MemoryStack implements AutoCloseable {
         return addr;
     }
 
+    public long calloc(int alignment, int size) {
+        return NULL;
+    }
+
     public ByteBuffer memAlloc(int size) {
         return memAlloc(size, 8);
     }
 
     public ByteBuffer memAlloc(int size, int alignment) {
-        return nmemByteBuffer(malloc(size, alignment), size)
+        return nmem_byte_buffer(malloc(size, alignment), size)
                 .order(ByteOrder.nativeOrder());
     }
 
     public ByteBuffer memCalloc(int size) {
-        return nmemByteBuffer(calloc(size), size)
+        return nmem_byte_buffer(calloc(size), size)
                 .order(ByteOrder.nativeOrder());
     }
 
@@ -112,7 +117,7 @@ public final class MemoryStack implements AutoCloseable {
     public void close() {
         if (!closed) {
             closed = true;
-            nmemFree(baseAddress);
+            nfree(baseAddress);
         }
     }
 }

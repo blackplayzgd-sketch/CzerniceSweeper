@@ -80,7 +80,7 @@ public class CzerniceAudio {
     public static native void nsetRolloff(long sound, float rolloff);
     public static native void nsetWet(long sound, float wet);
     public static native void nsetDry(long sound, float dry);
-    public static native void nsetDecayFrames(long sound, float decay);
+    public static native void nsetFeedback(long sound, float decay);
 
     public static native void nsetSampleRateReduction(long sound, int reduction);
     public static native void nsetBitDepth(long sound, int depth);
@@ -89,14 +89,4 @@ public class CzerniceAudio {
     public static native void nsetEqBand(long sound, long band_submit_info);
 
     public static native void ngetEqBandInfo(long sound, long count_ptr, long band_info_ptr);
-
-    public static native int getPointerSize();
-
-    public static native long nmemAlloc(long size);
-    public static native long nmemCalloc(long nobj, long size);
-    public static native void nmemFree(long address);
-
-    public static native long nmemAddress(ByteBuffer buffer);
-
-    public static native ByteBuffer nmemByteBuffer(long address, int capacity);
 }

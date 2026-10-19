@@ -1,34 +1,31 @@
 use std::slice;
-use crate::playback::{CzerniceEffect, CzernicePlayback, EqBandInfo};
+use crate::playback::{CzernicePlayback, CzerniceEqBandInfo};
 use maudio::audio::sample_rate::SampleRate;
 use maudio::data_source::sources::decoder::DecoderBuilder;
 use maudio::engine::node_graph::node_builder::NodeBuilder;
-use maudio::engine::node_graph::nodes::effects::delay::DelayNodeBuilder;
 use maudio::engine::node_graph::nodes::filters::biquad::BiquadNodeBuilder;
 use maudio::engine::node_graph::nodes::NodeOps;
 use maudio::engine::node_graph::NodeGraphOps;
 use maudio::engine::Engine;
 use maudio::{MaResult, MaudioError};
-use std::sync::atomic::AtomicU32;
-
-pub fn with_czernice_engine<F, T>(engine: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzerniceAudioEngine) -> MaResult<T> {
-    let engine = unsafe { &mut *(engine.cast_unsigned() as *mut CzerniceAudioEngine) };
-    f(engine)
-}
+use czernice_audio_proc_macro::{java_compatible};
+use crate::effect::{CustomDelayEffectBecauseMAudioDefaultOneIsStupidDumbRetardedAndBroken, CzerniceEffect};
 
 pub struct CzerniceAudioEngine {
     pub engine: Engine,
 }
 
 #[repr(C)]
+#[java_compatible(package = "net.xoknox.czernicesweeper.czerniceaudio.structs")]
 pub struct CzerniceSoundCreateInfo {
-    pub data_ptr: usize,
-    pub data_len: usize,
-    pub sample_rate: SampleRate,
+    pub p_data: *const u8,
+    pub data_count: u32,
+    pub sample_rate: u32,
     pub channels: u32,
+    pub reverb_delay: f32,
     pub num_filters: usize,
-    pub eq_info_ptr: usize,
-    pub eq_info_len: usize
+    pub p_eq_info: *const CzerniceEqBandInfo,
+    pub eq_info_count: u32,
 }
 
 impl CzerniceAudioEngine {
@@ -49,9 +46,9 @@ impl CzerniceAudioEngine {
         let mut builder = DecoderBuilder::new_f32();
         builder
             .channels(ci.channels)
-            .sample_rate(ci.sample_rate);
+            .sample_rate(ci.sample_rate.try_into().unwrap_or(SampleRate::Custom(0)));
 
-        let decoder = builder.copy_memory(unsafe { slice::from_raw_parts(ci.data_ptr as *const _, ci.data_len) })?;
+        let decoder = builder.copy_memory(unsafe { slice::from_raw_parts(ci.p_data, ci.data_count as usize) })?;
         let sound = self.engine.new_sound_from_source(&decoder)?;
 
         let graph = sound.node_graph();
@@ -64,15 +61,12 @@ impl CzerniceAudioEngine {
 
         let mut node_builder = NodeBuilder::effect();
         node_builder.set_in_channel_count(0, ci.channels).set_out_channel_count(0, ci.channels);
-        let effect = node_builder.build(&graph, CzerniceEffect {
-            rate_divisor: AtomicU32::new(1),
-            bit_depth: AtomicU32::new(16),
-            phase: 0,
-            held: [0.0; 2],
-        })?;
+        let effect = node_builder.build(&graph, CzerniceEffect::new(1, 16))?;
 
-        // TODO: replace with custom impl, this one is retarded as shit
-        //let delay = DelayNodeBuilder::new(&graph, 2, SampleRate::Sr44100, 11_025, 0.6).dry(1.0).wet(0.7).build()?;
+        let mut node_builder2 = NodeBuilder::effect();
+        node_builder2.set_in_channel_count(0, ci.channels).set_out_channel_count(0, ci.channels);
+        let delay = node_builder2.build(
+            &graph, CustomDelayEffectBecauseMAudioDefaultOneIsStupidDumbRetardedAndBroken::new(0.0, 1.0, 0.25, ci.reverb_delay, ci.sample_rate))?;
 
         sound.as_node().attach_output_bus(0, &filters[0].as_node(), 0)?;
 
@@ -81,14 +75,14 @@ impl CzerniceAudioEngine {
         }
 
         filters[ci.num_filters - 1].as_node().attach_output_bus(0, &effect.as_node(), 0)?;
-        effect.as_node().attach_output_bus(0, &graph.endpoint(), 0)?;
-        // delay.as_node().attach_output_bus(0, &graph.endpoint(), 0)?;
+        effect.as_node().attach_output_bus(0, &delay.as_node(), 0)?;
+        delay.as_node().attach_output_bus(0, &graph.endpoint(), 0)?;
 
         let eq = filters.try_into().ok().ok_or(MaudioError::other("idk something broke"))?;
         
-        let eq_info = unsafe { slice::from_raw_parts(ci.eq_info_ptr as *const _, ci.eq_info_len) }.to_vec();
+        let eq_info = unsafe { slice::from_raw_parts(ci.p_eq_info, ci.eq_info_count as usize) }.to_vec();
         
-        let _box = Box::new(CzernicePlayback { sound, eq, effect, decoder, eq_info });
+        let _box = Box::new(CzernicePlayback { sound, eq, effect, delay, _decoder: decoder, eq_info });
         Ok(Box::into_raw(_box))
     }
 }

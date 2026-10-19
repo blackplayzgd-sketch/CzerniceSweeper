@@ -6,7 +6,7 @@ import static net.xoknox.czernicesweeper.czerniceaudio.mem.MemoryUtil.NULL;
 
 public interface Pointer {
 
-    int POINTER_SIZE = CzerniceAudio.getPointerSize();
+    int POINTER_SIZE = MemoryUtil.getPointerSize();
 
     int POINTER_SHIFT = POINTER_SIZE == 8 ? 3 : 2;
 

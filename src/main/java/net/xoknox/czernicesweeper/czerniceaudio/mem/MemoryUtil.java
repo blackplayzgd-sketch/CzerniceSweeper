@@ -3,12 +3,12 @@ package net.xoknox.czernicesweeper.czerniceaudio.mem;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 
-import static net.xoknox.czernicesweeper.czerniceaudio.CzerniceAudio.*;
 import static net.xoknox.czernicesweeper.czerniceaudio.mem.Pointer._64_BIT;
 
 public class MemoryUtil {
 
     public static final long NULL = 0L;
+    public static final boolean CHECKS = false;
 
     static final sun.misc.Unsafe UNSAFE = getUnsafeInstance();
 
@@ -45,38 +45,158 @@ public class MemoryUtil {
         throw new RuntimeException("Failed to get unsafe");
     }
 
-    public static long memAlloc(long size) {
-        if (size == 0) throw new RuntimeException("Allocation size can not be 0");
-        return nmemAlloc(size);
+    ///////////////////////////
+    //      ALLOCATION       //
+    ///////////////////////////
+    public static native long nmalloc_aligned(long align, long size);
+    public static native long nmalloc(long size);
+
+    public static native long ncalloc(long count, long size);
+
+    public static native long nrealloc(long ptr, long size);
+
+    public static native void nfree(long ptr);
+
+    ///////////////////////////
+    //    MEM OPERATIONS     //
+    ///////////////////////////
+    public static native void nmem_cpy(long dst, long src, long size);
+    public static native void nmem_move(long dst, long src, long size);
+
+    public static native void nmem_set(long ptr, int value, long size);
+
+    public static native int nmem_cmp(long a, long b, long size);
+
+    public static native long nmem_address(ByteBuffer buf);
+    public static native ByteBuffer nmem_byte_buffer(long address, int capacity);
+
+    public static native int getPointerSize();
+
+
+    ///////////////////////////
+    //      ALLOCATION       //
+    ///////////////////////////
+    public static long malloc(long align, long size) {
+        if (CHECKS) {
+            if (align == 0) throw new IllegalStateException("Alignment cannot be 0");
+            if (size == 0) return NULL;
+        }
+
+        return nmalloc_aligned(align, size);
     }
 
-    public static long memCalloc(long nobj, long size) {
-        if (size == 0 || nobj == 0) throw new RuntimeException("Neither nobj or size can not be 0");
-        return nmemCalloc(nobj, size);
+    public static long malloc(long size) {
+        if (CHECKS) {
+            if (size == 0) return NULL;
+        }
+
+        return nmalloc(size);
     }
 
-    public static long memCalloc(long size) {
-        return memCalloc(1, size);
+    public static long calloc(long count, long size) {
+        if (CHECKS) {
+            if (size == 0 || count == 0) return NULL;
+        }
+
+        return ncalloc(count, size);
     }
 
-    public static void memFree(long address) {
-        if (address == NULL) throw new RuntimeException("Cannot free NULL address");
-        nmemFree(address);
+    public static long calloc(long size) {
+        return calloc(1, size);
     }
 
-    public static long memAddress(ByteBuffer buffer) {
-        if (buffer == null) throw new RuntimeException("Buffer may not be NULL");
-        return nmemAddress(buffer);
+    public static long realloc(long ptr, long size) {
+        if (CHECKS) {
+            if (ptr == NULL) throw new IllegalStateException("Tried to realloc a NULL pointer");
+            if (size == 0) return NULL;
+        }
+
+        return nrealloc(ptr, size);
     }
 
-    public static ByteBuffer memByteBuffer(long address, int capacity) {
-        if (address == NULL) throw new RuntimeException("Memory address cannot be NULL");
-        if (capacity == 0) throw new RuntimeException("Capacity may not be 0");
-        return nmemByteBuffer(address, capacity);
+    public static long realloc(long ptr, long align, long oldSize, long size) {
+        if (CHECKS) {
+            if (ptr == NULL) throw new IllegalStateException("Tried to realloc a NULL pointer");
+            if (size == 0) return NULL;
+        }
+
+        long new_ptr = malloc(align, size);
+        mem_cpy(new_ptr, ptr, Math.min(oldSize, size));
+        return new_ptr;
+    }
+
+    public static void free(long ptr) {
+        if (CHECKS) {
+            if (ptr == NULL) throw new IllegalStateException("Cannot free a NULL pointer");
+        }
+
+        nfree(ptr);
+    }
+
+    ///////////////////////////
+    //    MEM OPERATIONS     //
+    ///////////////////////////
+    public static void mem_cpy(long dst, long src, long size) {
+        if (CHECKS) {
+            if (size == 0) return;
+            if (dst == NULL) throw new IllegalStateException("Destination can not be NULL");
+            if (src == NULL) throw new IllegalStateException("Source can not be NULL");
+            if (src + size >= dst) throw new IllegalStateException("Source and destination can not overlap");
+        }
+
+        nmem_cpy(dst, src, size);
+    }
+
+    public static void mem_move(long dst, long src, long size) {
+        if (CHECKS) {
+            if (size == 0) return;
+            if (dst == NULL) throw new IllegalStateException("Destination can not be NULL");
+            if (src == NULL) throw new IllegalStateException("Source can not be NULL");
+        }
+
+        nmem_move(dst, src, size);
+    }
+
+    public static void mem_set(long ptr, int value, long size) {
+        if (CHECKS) {
+            if (size == 0) return;
+            if (ptr == NULL) throw new IllegalStateException("Destination can not be NULL");
+        }
+
+        nmem_set(ptr, value, size);
+    }
+
+    public static int mem_cmp(long a, long b, long size) {
+        return nmem_cmp(a, b, size);
+    }
+
+    public static long memAddress(ByteBuffer buf) {
+        if (CHECKS) {
+            if (buf == null) throw new NullPointerException("Buffer may not be null");
+        }
+
+        return nmem_address(buf);
+    }
+
+    public static ByteBuffer mem_byte_buffer(long address, int capacity) {
+        if (CHECKS) {
+            if (address == NULL) throw new IllegalStateException("Address may not be NULL");
+        }
+
+        return nmem_byte_buffer(address, capacity);
+    }
+
+
+    public static ByteBuffer mallocBytes(long align, int size) {
+        return mem_byte_buffer(malloc(align, size), size);
     }
 
     public static ByteBuffer mallocBytes(int size) {
-        return memByteBuffer(memAlloc(size), size);
+        return mem_byte_buffer(malloc(size), size);
+    }
+
+    public static IntBuffer mallocInts(long align, int size) {
+        return mallocBytes(align, Integer.BYTES * size).asIntBuffer();
     }
 
     public static IntBuffer mallocInts(int size) {
@@ -84,7 +204,7 @@ public class MemoryUtil {
     }
 
     public static ByteBuffer callocBytes(int size) {
-        return memByteBuffer(memCalloc(size), size);
+        return mem_byte_buffer(calloc(1, size), size);
     }
 
     public static IntBuffer callocInts(int size) {
