@@ -1,7 +1,6 @@
 package net.xoknox.czernicesweeper.czerniceaudio.mem;
 
-import java.nio.ByteBuffer;
-import java.nio.IntBuffer;
+import java.nio.*;
 
 import static net.xoknox.czernicesweeper.czerniceaudio.mem.Pointer._64_BIT;
 
@@ -67,7 +66,7 @@ public class MemoryUtil {
 
     public static native int nmem_cmp(long a, long b, long size);
 
-    public static native long nmem_address(ByteBuffer buf);
+    public static native long nmem_address(Buffer buf);
     public static native ByteBuffer nmem_byte_buffer(long address, int capacity);
 
     public static native int getPointerSize();
@@ -170,14 +169,6 @@ public class MemoryUtil {
         return nmem_cmp(a, b, size);
     }
 
-    public static long memAddress(ByteBuffer buf) {
-        if (CHECKS) {
-            if (buf == null) throw new NullPointerException("Buffer may not be null");
-        }
-
-        return nmem_address(buf);
-    }
-
     public static ByteBuffer mem_byte_buffer(long address, int capacity) {
         if (CHECKS) {
             if (address == NULL) throw new IllegalStateException("Address may not be NULL");
@@ -186,13 +177,61 @@ public class MemoryUtil {
         return nmem_byte_buffer(address, capacity);
     }
 
+    public static long memAddress(ByteBuffer buf) {
+        if (CHECKS) {
+            if (buf == null) throw new NullPointerException("Buffer may not be null");
+        }
+
+        return nmem_address(buf);
+    }
+
+    public static long memAddress(ShortBuffer buf) {
+        if (CHECKS) {
+            if (buf == null) throw new NullPointerException("Buffer may not be null");
+        }
+
+        return nmem_address(buf) + buf.position() * 2L;
+    }
+
+    public static long memAddress(IntBuffer buf) {
+        if (CHECKS) {
+            if (buf == null) throw new NullPointerException("Buffer may not be null");
+        }
+
+        return nmem_address(buf) + buf.position() * 4L;
+    }
+
+    public static long memAddress(LongBuffer buf) {
+        if (CHECKS) {
+            if (buf == null) throw new NullPointerException("Buffer may not be null");
+        }
+
+        return nmem_address(buf) + buf.position() * 8L;
+    }
+
+    public static long memAddress(FloatBuffer buf) {
+        if (CHECKS) {
+            if (buf == null) throw new NullPointerException("Buffer may not be null");
+        }
+
+        return nmem_address(buf) + buf.position() * 4L;
+    }
+
+    public static long memAddress(DoubleBuffer buf) {
+        if (CHECKS) {
+            if (buf == null) throw new NullPointerException("Buffer may not be null");
+        }
+
+        return nmem_address(buf) + buf.position() * 8L;
+    }
+
 
     public static ByteBuffer mallocBytes(long align, int size) {
-        return mem_byte_buffer(malloc(align, size), size);
+        return mem_byte_buffer(malloc(align, size), size).order(ByteOrder.nativeOrder());
     }
 
     public static ByteBuffer mallocBytes(int size) {
-        return mem_byte_buffer(malloc(size), size);
+        return mem_byte_buffer(malloc(size), size).order(ByteOrder.nativeOrder());
     }
 
     public static IntBuffer mallocInts(long align, int size) {

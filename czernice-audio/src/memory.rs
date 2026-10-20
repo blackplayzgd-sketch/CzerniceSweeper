@@ -1,9 +1,9 @@
-use std::ffi::c_void;
+use crate::czernicefn;
 use jni::errors::{Error, LogErrorAndDefault};
 use jni::objects::JByteBuffer;
-use jni::sys::{jbyte, jfloat, jint, jlong, jobject};
+use jni::sys::{jint, jlong, jobject};
 use libc::size_t;
-use crate::czernicefn;
+use std::ffi::c_void;
 
 czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_mem_MemoryUtil, (env, class) => {
     fn getPointerSize() -> jint {
@@ -67,10 +67,11 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_mem_MemoryUtil, (env, class
     }
 
 
-    fn nmem_1address(buffer: JByteBuffer) -> jlong {
+    fn nmem_1address(buffer: jobject) -> jlong {
         unsafe {
             env.with_env(|a| {
-                a.get_direct_buffer_address(&buffer).map(|addr| addr as jlong)
+                let buf = JByteBuffer::from_raw(a, buffer);
+                a.get_direct_buffer_address(&buf).map(|addr| addr as jlong)
             }).resolve::<LogErrorAndDefault>()
         }
     }

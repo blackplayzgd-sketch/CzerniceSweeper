@@ -189,7 +189,7 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_CzerniceAudio, (env, class)
     }
 
     fn ngetEqBandInfo(sound: jlong, count: jlong, band_info: jlong) {
-        let count_ptr = unsafe { &mut *(count.cast_unsigned() as *mut usize) };
+        let count_ptr = unsafe { &mut *(count.cast_unsigned() as *mut u32) };
         let band_info_ptr = unsafe { &mut *(band_info.cast_unsigned() as *mut CzerniceEqBandInfo) };
         with_czernice_playback(sound, |sound| sound.get_eq_band_info(count_ptr, band_info_ptr)).simply_err()
     }

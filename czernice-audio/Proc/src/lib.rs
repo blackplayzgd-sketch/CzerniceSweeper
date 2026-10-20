@@ -1,10 +1,10 @@
+use mvutils::utils::TetrahedronOp;
 use proc_macro::TokenStream;
+use quote::ToTokens;
 use std::fs::OpenOptions;
 use std::io::Write;
-use mvutils::utils::TetrahedronOp;
-use quote::ToTokens;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, LitBool, LitStr};
 use syn::meta::parser;
+use syn::{parse_macro_input, Data, DeriveInput, Fields, LitStr};
 
 const ALLOCATION_TYPES: [(&str, &str, &str); 5] = [
     ("malloc", "", "MemoryUtil.malloc(SIZEOF), null"),
@@ -160,7 +160,7 @@ fn get_set2(ty: &str, addr: &str, value: &str) -> String {
         "f32" |
         "f64" => format!("putAddress({addr}, memAddress({value}))"),
         a if a.starts_with('*') => panic!("no, im not implementing this"),
-        a => format!("putAddress({addr}, {value}.address())")
+        _ => format!("putAddress({addr}, {value}.address())")
     }
 }
 
@@ -273,7 +273,7 @@ pub fn java_compatible(params: TokenStream, input: TokenStream) -> TokenStream {
     }
     set.push_str("\n    ) {\n");
     for field in &java_fields {
-        let (java_name, java_ty) = get_java_name_and_type_resolved(&java_fields, field);
+        let (java_name, _java_ty) = get_java_name_and_type_resolved(&java_fields, field);
 
         let p_name = field.name.replace("_count", "");
         let p_name = format!("p_{p_name}");
@@ -304,7 +304,7 @@ pub fn java_compatible(params: TokenStream, input: TokenStream) -> TokenStream {
         let mut count_name = field.name.replace("p_", "");
         count_name.push_str("_count");
 
-        let mut cap = java_fields.iter().find(|i| i.name == count_name);
+        let cap = java_fields.iter().find(|i| i.name == count_name);
         let cap = cap.map(|field|
             format!("n{arg}(struct)", arg=get_java_name(&field.name))
         );
@@ -319,9 +319,20 @@ pub fn java_compatible(params: TokenStream, input: TokenStream) -> TokenStream {
         let (java_name, java_ty) = get_java_name_and_type_resolved(&java_fields, field);
         let upper = format!("OF_{n}", n = field.name.to_uppercase());
 
+        let mut count_name = field.name.replace("p_", "");
+        count_name.push_str("_count");
+
+        let cap = java_fields.iter().find(|i| i.name == count_name);
+        let cap = cap.map(|field| get_java_name(&field.name));
+
+        let mut count_setter = String::new();
+        if let Some(cap) = cap {
+            count_setter = format!("n{cap}(struct, value == null ? 0 : value.remaining()); ");
+        }
+
         let f = get_set(&field.ty, &format!("struct + {name}.{upper}"), "value");
 
-        nsetters.push_str(&format!("    public static void n{java_name}(long struct, {java_ty} value) {{ {f}; }}\n\n"))
+        nsetters.push_str(&format!("    public static void n{java_name}(long struct, {java_ty} value) {{ {f}; {count_setter}}}\n\n"))
     }
 
     let class = format!(r#"{package}

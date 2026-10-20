@@ -41,4 +41,4 @@ build/
 czernice-audio/target
 czernice-audio/.idea
 
-AudioTest.java
+src/main/java/net/xoknox/czernicesweeper/czerniceaudio/AudioTest.java
