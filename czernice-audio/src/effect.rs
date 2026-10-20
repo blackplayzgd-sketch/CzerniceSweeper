@@ -38,19 +38,19 @@ pub struct CzerniceEffect {
 impl CzerniceEffect {
     pub fn new(rate_divisor: u32, bit_depth: u32) -> Self {
         Self {
-            rate_divisor: AtomicU32::new(rate_divisor),
-            bit_depth: AtomicU32::new(bit_depth),
+            rate_divisor: AtomicU32::new(rate_divisor.clamp(1, 128)),
+            bit_depth: AtomicU32::new(bit_depth.clamp(1, 32)),
             phase: 0,
             held: [0.0; 2],
         }
     }
 
     pub fn set_rate_divisor(&self, rate_divisor: u32) {
-        self.rate_divisor.store(rate_divisor, Ordering::Relaxed);
+        self.rate_divisor.store(rate_divisor.clamp(1, 128), Ordering::Relaxed);
     }
 
     pub fn set_bit_depth(&self, bit_depth: u32) {
-        self.bit_depth.store(bit_depth, Ordering::Relaxed);
+        self.bit_depth.store(bit_depth.clamp(1, 32), Ordering::Relaxed);
     }
 }
 
