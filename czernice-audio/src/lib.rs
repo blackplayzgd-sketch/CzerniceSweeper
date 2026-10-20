@@ -1,5 +1,7 @@
-mod engine;
-mod playback;
+#![allow(clippy::missing_safety_doc, clippy::missing_panics_doc, clippy::not_unsafe_ptr_arg_deref, clippy::needless_range_loop, clippy::wrong_self_convention)]
+
+pub mod engine;
+pub mod playback;
 pub mod effect;
 pub mod memory;
 
@@ -98,9 +100,7 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_CzerniceAudio, (env, class)
             Ok(version == VERSION.as_vulkan_version().cast_signed())
         }).resolve::<LogErrorAndDefault>();
 
-        if crash && !matches {
-            panic!("GASP ALARM! Version mismatch!")
-        }
+        assert!(!(crash && !matches), "GASP ALARM! Version mismatch!");
 
         matches
     }
@@ -111,7 +111,7 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_CzerniceAudio, (env, class)
 
     fn nretireEngine(engine: jlong) {
         let engine = unsafe { &mut *(engine.cast_unsigned() as *mut CzerniceAudioEngine) };
-        CzerniceAudioEngine::retire_engine(engine)
+        CzerniceAudioEngine::retire_engine(engine);
     }
 
     fn ncreateSound(engine: jlong, create_info: jlong) -> jlong {
@@ -139,35 +139,35 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_CzerniceAudio, (env, class)
     }
 
     fn nsetVolume(sound: jlong, volume: jfloat) {
-        with_czernice_playback(sound, |sound| sound.set_volume(volume)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_volume(volume)).simply_err();
     }
 
     fn nsetSpeed(sound: jlong, speed: jfloat) {
-        with_czernice_playback(sound, |sound| sound.set_speed(speed)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_speed(speed)).simply_err();
     }
 
     fn nsetBalance(sound: jlong, balance: jfloat) {
-        with_czernice_playback(sound, |sound| sound.set_balance(balance)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_balance(balance)).simply_err();
     }
 
     fn nsetDoppler(sound: jlong, doppler: jfloat) {
-        with_czernice_playback(sound, |sound| sound.set_doppler(doppler)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_doppler(doppler)).simply_err();
     }
 
     fn nsetRolloff(sound: jlong, rolloff: jfloat) {
-        with_czernice_playback(sound, |sound| sound.set_rolloff(rolloff)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_rolloff(rolloff)).simply_err();
     }
 
     fn nsetWet(sound: jlong, wet: jfloat) {
-        with_czernice_playback(sound, |sound| sound.set_wet(wet)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_wet(wet)).simply_err();
     }
 
     fn nsetDry(sound: jlong, dry: jfloat) {
-        with_czernice_playback(sound, |sound| sound.set_dry(dry)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_dry(dry)).simply_err();
     }
 
     fn nsetFeedback(sound: jlong, feedback: jfloat) {
-        with_czernice_playback(sound, |sound| sound.set_feedback(feedback)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_feedback(feedback)).simply_err();
     }
 
     fn nisPlaying(sound: jlong) -> jboolean {
@@ -175,30 +175,30 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_CzerniceAudio, (env, class)
     }
 
      fn nsetLooping(sound: jlong, looping: jboolean) {
-        with_czernice_playback(sound, |sound| sound.set_looping(looping)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_looping(looping)).simply_err();
     }
 
     fn nsetEqGain(sound: jlong, gain_submit_info: jlong) {
         let eq_gain_submit_info = unsafe { &mut *(gain_submit_info.cast_unsigned() as *mut CzerniceEqGainModificationSubmitInfo) };
-        with_czernice_playback(sound, |sound| sound.set_eq_gain(eq_gain_submit_info)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_eq_gain(eq_gain_submit_info)).simply_err();
     }
 
     fn nsetEqBand(sound: jlong, band_submit_info: jlong) {
         let eq_band_submit_info = unsafe { &mut *(band_submit_info.cast_unsigned() as *mut CzerniceEqBandModificationSubmitInfo) };
-        with_czernice_playback(sound, |sound| sound.set_eq_band(eq_band_submit_info)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_eq_band(eq_band_submit_info)).simply_err();
     }
 
     fn ngetEqBandInfo(sound: jlong, count: jlong, band_info: jlong) {
         let count_ptr = unsafe { &mut *(count.cast_unsigned() as *mut u32) };
         let band_info_ptr = unsafe { &mut *(band_info.cast_unsigned() as *mut CzerniceEqBandInfo) };
-        with_czernice_playback(sound, |sound| sound.get_eq_band_info(count_ptr, band_info_ptr)).simply_err()
+        with_czernice_playback(sound, |sound| sound.get_eq_band_info(count_ptr, band_info_ptr)).simply_err();
     }
 
     fn nsetSampleRateReduction(sound: jlong, reduction: jint) {
-        with_czernice_playback(sound, |sound| sound.set_sample_rate_reduction(reduction as u32)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_sample_rate_reduction(reduction.cast_unsigned())).simply_err();
     }
 
     fn nsetBitDepth(sound: jlong, depth: jint) {
-        with_czernice_playback(sound, |sound| sound.set_bit_depth(depth as u32)).simply_err()
+        with_czernice_playback(sound, |sound| sound.set_bit_depth(depth.cast_unsigned())).simply_err();
     }
 });

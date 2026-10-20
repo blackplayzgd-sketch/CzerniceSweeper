@@ -7,7 +7,7 @@ use maudio::engine::node_graph::nodes::filters::biquad::BiquadNodeBuilder;
 use maudio::engine::node_graph::nodes::NodeOps;
 use maudio::engine::node_graph::NodeGraphOps;
 use maudio::engine::Engine;
-use maudio::{MaResult, MaudioError};
+use maudio::MaResult;
 use czernice_audio_proc_macro::{java_compatible};
 use crate::effect::{CustomDelayEffectBecauseMAudioDefaultOneIsStupidDumbRetardedAndBroken, CzerniceEffect};
 
@@ -94,11 +94,9 @@ impl CzerniceAudioEngine {
         effect.as_node().attach_output_bus(0, &delay.as_node(), 0)?;
         delay.as_node().attach_output_bus(0, &graph.endpoint(), 0)?;
 
-        let eq = filters.try_into().ok().ok_or(MaudioError::other("idk something broke"))?;
-
         let eq_info = eq_info.to_vec();
         
-        let _box = Box::new(CzernicePlayback { sound, eq, effect, delay, _decoder: decoder, eq_info });
+        let _box = Box::new(CzernicePlayback { sound, eq: filters, effect, delay, _decoder: decoder, eq_info });
         Ok(Box::into_raw(_box))
     }
 }
