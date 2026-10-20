@@ -19,7 +19,7 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_mem_MemoryUtil, (env, class
             }
             #[cfg(target_os = "windows")]
             {
-                libc::aligned_malloc(align as size_t, size as size_t) as jlong
+                libc::malloc(size as size_t) as jlong
             }
         }
     }
