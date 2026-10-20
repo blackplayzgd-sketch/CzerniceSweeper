@@ -179,11 +179,22 @@ checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 name = "czernice-audio"
 version = "0.1.0"
 dependencies = [
+ "czernice-audio-proc-macro",
  "jni",
+ "libc",
  "maudio",
  "mvutils",
- "parking_lot",
  "paste",
+]
+
+[[package]]
+name = "czernice-audio-proc-macro"
+version = "0.1.0"
+dependencies = [
+ "mvutils",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

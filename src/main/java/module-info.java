@@ -4,9 +4,12 @@ module net.xoknox.czernicesweeper {
     requires javafx.media;
     requires static lombok;
     requires jdk.jshell;
+    requires jdk.unsupported;
+    requires org.jetbrains.annotations;
 
 
     opens net.xoknox.czernicesweeper to javafx.fxml;
+    exports net.xoknox.czernicesweeper.czerniceaudio.structs;
     exports net.xoknox.czernicesweeper;
     exports net.xoknox.czernicesweeper.applicationinstallation;
     opens net.xoknox.czernicesweeper.applicationinstallation to javafx.fxml;

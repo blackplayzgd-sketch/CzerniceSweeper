@@ -1,86 +1,103 @@
-use std::collections::HashMap;
-use std::sync::atomic::AtomicU32;
+use std::slice;
+use crate::playback::{CzernicePlayback, CzerniceEqBandInfo, band_coefficients};
 use maudio::audio::sample_rate::SampleRate;
 use maudio::data_source::sources::decoder::DecoderBuilder;
-use maudio::engine::Engine;
 use maudio::engine::node_graph::node_builder::NodeBuilder;
-use maudio::engine::node_graph::NodeGraphOps;
-use maudio::engine::node_graph::nodes::effects::delay::DelayNodeBuilder;
 use maudio::engine::node_graph::nodes::filters::biquad::BiquadNodeBuilder;
 use maudio::engine::node_graph::nodes::NodeOps;
-use maudio::{MaResult, MaudioError};
-use mvutils::lazy;
-use mvutils::utils::next_id;
-use parking_lot::Mutex;
-use crate::playback::{CzerniceEffect, CzernicePlayback};
-
-pub type CzerniceId = u64;
-
-lazy! {
-    pub static ENGINES: Mutex<HashMap<CzerniceId, CzerniceAudioEngine>> = Mutex::new(HashMap::new());
-}
-
-pub fn with_czernice_engine<F, T>(engine: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzerniceAudioEngine) -> MaResult<T> {
-    let mut engines = ENGINES.lock();
-    if let Some(engine) = engines.get_mut(&engine.cast_unsigned()) {
-        f(engine)
-    } else {
-        Err(MaudioError::other("CzerniceAudioEngine not found"))
-    }
-}
+use maudio::engine::node_graph::NodeGraphOps;
+use maudio::engine::Engine;
+use maudio::MaResult;
+use czernice_audio_proc_macro::{java_compatible};
+use crate::effect::{CustomDelayEffectBecauseMAudioDefaultOneIsStupidDumbRetardedAndBroken, CzerniceEffect};
 
 pub struct CzerniceAudioEngine {
     pub engine: Engine,
-    pub sounds: HashMap<CzerniceId, CzernicePlayback>,
+}
+
+#[repr(C)]
+#[java_compatible(package = "net.xoknox.czernicesweeper.czerniceaudio.structs")]
+pub struct CzerniceSoundCreateInfo {
+    pub p_data: *const u8,
+    pub data_count: u32,
+    pub sample_rate: u32,
+    pub channels: u32,
+
+    // eq stuff
+    pub num_filters: usize,
+    pub p_eq_info: *const CzerniceEqBandInfo,
+    pub eq_info_count: u32,
+
+    // reverb stuff
+    pub reverb_delay: f32,
+    pub wet: f32,
+    pub dry: f32,
+    pub feedback: f32,
+
+    // low quality effect stuff
+    pub rate_divisor: u32,
+    pub bit_depth: u32,
 }
 
 impl CzerniceAudioEngine {
-    pub fn new() -> MaResult<CzerniceId> {
+    pub fn new() -> MaResult<*mut CzerniceAudioEngine> {
         let engine = Engine::new()?;
-        let mut id = next_id("czernice_audio");
-        if id == 0 {
-            id = next_id("czernice_audio");
-        }
-        ENGINES.lock().insert(id, CzerniceAudioEngine { engine, sounds: HashMap::new() });
-        Ok(id)
+
+        let this = Box::new(Self { engine });
+        Ok(Box::into_raw(this))
     }
 
-    pub fn create_sound(&mut self, data: &[u8]) -> MaResult<CzerniceId> {
+    pub fn retire_engine(engine: *mut CzerniceAudioEngine) {
+        unsafe { let _ = Box::from_raw(engine); }
+    }
+
+    pub fn create_sound(&self, ci: *mut CzerniceSoundCreateInfo) -> MaResult<*mut CzernicePlayback> {
+        let ci = unsafe { ci.as_ref().unwrap() };
+
         let mut builder = DecoderBuilder::new_f32();
-        builder.channels(2).sample_rate(SampleRate::Sr44100);
-        let decoder = builder.copy_memory(data.to_vec())?;
+        builder
+            .channels(ci.channels)
+            .sample_rate(ci.sample_rate.try_into().unwrap_or(SampleRate::Custom(0)));
+
+        let decoder = builder.copy_memory(unsafe { slice::from_raw_parts(ci.p_data, ci.data_count as usize) })?;
         let sound = self.engine.new_sound_from_source(&decoder)?;
+
         let graph = sound.node_graph();
-        let mut filters = Vec::with_capacity(3);
-        for _ in 0..3 {
-            let filter = BiquadNodeBuilder::new(&graph, 2, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
-                .in_channel_count(2).out_channel_count(2).build()?;
+
+        let mut filters = Vec::with_capacity(ci.num_filters);
+        let eq_info = unsafe { slice::from_raw_parts(ci.p_eq_info, ci.eq_info_count as usize) };
+        for i in 0..ci.num_filters {
+            let band_data = &eq_info[i];
+            let coefficients = band_coefficients(band_data)?;
+
+            let filter = BiquadNodeBuilder::new(&graph, ci.channels, coefficients[0] as f32, coefficients[1] as f32, coefficients[2] as f32, coefficients[3] as f32, coefficients[4] as f32, coefficients[5] as f32)
+                .in_channel_count(ci.channels).out_channel_count(ci.channels).build()?;
             filters.push(filter);
         }
-        sound.as_node().attach_output_bus(0, &filters[0].as_node(), 0)?;
-        filters[0].as_node().attach_output_bus(0, &filters[1].as_node(), 0)?;
-        filters[1].as_node().attach_output_bus(0, &filters[2].as_node(), 0)?;
+
         let mut node_builder = NodeBuilder::effect();
-        node_builder.set_in_channel_count(0, 2).set_out_channel_count(0, 2);
-        let effect = node_builder.build(&graph, CzerniceEffect {
-            rate_divisor: AtomicU32::new(1),
-            bit_depth: AtomicU32::new(16),
-            phase: 0,
-            held: [0.0; 2],
-        })?;
-        filters[2].as_node().attach_output_bus(0, &effect.as_node(), 0)?;
-        let delay = DelayNodeBuilder::new(&graph, 2, SampleRate::Sr44100, 11_025, 0.25)
-            .in_channel_count(2).out_channel_count(2).mix(0.0).build()?;
+        node_builder.set_in_channel_count(0, ci.channels).set_out_channel_count(0, ci.channels);
+        let effect = node_builder.build(&graph, CzerniceEffect::new(ci.rate_divisor, ci.bit_depth))?;
+
+        let mut node_builder2 = NodeBuilder::effect();
+        node_builder2.set_in_channel_count(0, ci.channels).set_out_channel_count(0, ci.channels);
+        let delay = node_builder2.build(
+            &graph, CustomDelayEffectBecauseMAudioDefaultOneIsStupidDumbRetardedAndBroken::new(ci.wet, ci.dry, ci.feedback, ci.reverb_delay, ci.sample_rate))?;
+
+        sound.as_node().attach_output_bus(0, &filters[0].as_node(), 0)?;
+
+        for i in 0 .. (ci.num_filters - 1) {
+            filters[i].as_node().attach_output_bus(0, &filters[i + 1].as_node(), 0)?;
+        }
+
+        filters[ci.num_filters - 1].as_node().attach_output_bus(0, &effect.as_node(), 0)?;
         effect.as_node().attach_output_bus(0, &delay.as_node(), 0)?;
         delay.as_node().attach_output_bus(0, &graph.endpoint(), 0)?;
-        let id = next_id("czernice_id");
-        let eq = filters.try_into().ok().ok_or(MaudioError::other("idk something broke"))?;
-        self.sounds.insert(id, CzernicePlayback { sound, eq, effect, delay });
-        Ok(id)
-    }
 
-    pub fn remove_sound(&mut self, id: CzerniceId) -> bool {
-        self.sounds.remove(&id).is_some()
+        let eq_info = eq_info.to_vec();
+        
+        let _box = Box::new(CzernicePlayback { sound, eq: filters, effect, delay, _decoder: decoder, eq_info });
+        Ok(Box::into_raw(_box))
     }
 }
 
