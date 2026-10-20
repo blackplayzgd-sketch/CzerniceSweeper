@@ -193,7 +193,7 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
     public static int neqInfoCount(long struct) { return getInt(struct + CzerniceSoundCreateInfo.OF_EQ_INFO_COUNT); }
 
 
-    public static void npData(long struct, ByteBuffer value) { putAddress(struct + CzerniceSoundCreateInfo.OF_P_DATA, memAddress(value)); }
+    public static void npData(long struct, ByteBuffer value) { putAddress(struct + CzerniceSoundCreateInfo.OF_P_DATA, memAddress(value)); ndataCount(struct, value == null ? 0 : value.remaining()); }
 
     public static void ndataCount(long struct, int value) { putInt(struct + CzerniceSoundCreateInfo.OF_DATA_COUNT, value); }
 
@@ -205,7 +205,7 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
 
     public static void nnumFilters(long struct, long value) { putAddress(struct + CzerniceSoundCreateInfo.OF_NUM_FILTERS, value); }
 
-    public static void npEqInfo(long struct, CzerniceEqBandInfo.Buffer value) { putAddress(struct + CzerniceSoundCreateInfo.OF_P_EQ_INFO, value.address()); }
+    public static void npEqInfo(long struct, CzerniceEqBandInfo.Buffer value) { putAddress(struct + CzerniceSoundCreateInfo.OF_P_EQ_INFO, value.address()); neqInfoCount(struct, value == null ? 0 : value.remaining()); }
 
     public static void neqInfoCount(long struct, int value) { putInt(struct + CzerniceSoundCreateInfo.OF_EQ_INFO_COUNT, value); }
 

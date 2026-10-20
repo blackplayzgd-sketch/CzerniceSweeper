@@ -20,7 +20,7 @@ public abstract class StructBuffer<T extends Struct<T>, SELF extends StructBuffe
     public int capacity() { return this.capacity; }
 
     public int remaining() {
-        return this.capacity() * getElementFactory().sizeof();
+        return this.capacity();
     }
 
     public void free() {

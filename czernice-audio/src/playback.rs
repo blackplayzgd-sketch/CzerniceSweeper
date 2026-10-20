@@ -1,11 +1,14 @@
-use std::ptr;
-use maudio::engine::node_graph::nodes::Node;
+use crate::effect::{CustomDelayEffectBecauseMAudioDefaultOneIsStupidDumbRetardedAndBroken, CzerniceEffect};
+use czernice_audio_proc_macro::java_compatible;
+use maudio::data_source::sources::decoder::{Decoder, Owned};
 use maudio::engine::node_graph::nodes::filters::biquad::BiquadNode;
+use maudio::engine::node_graph::nodes::Node;
 use maudio::sound::Sound;
 use maudio::MaResult;
 use maudio::data_source::sources::decoder::{Decoder, Owned};
 use czernice_audio_proc_macro::java_compatible;
 use crate::effect::{CustomDelayEffectBecauseMAudioDefaultOneIsStupidDumbRetardedAndBroken, CzerniceEffect};
+use std::ptr;
 
 pub fn with_czernice_playback<F, T>(playback: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzernicePlayback) -> T {
     let playback = unsafe { &mut *(playback.cast_unsigned() as *mut CzernicePlayback) };
@@ -131,12 +134,12 @@ impl CzernicePlayback {
         curr.q = si.q;
     }
 
-    pub fn get_eq_band_info(&mut self, count: &mut usize, data: *mut CzerniceEqBandInfo) {
-        if (data.is_null()) {
-            *count = self.eq_info.len();
+    pub fn get_eq_band_info(&mut self, count: *mut u32, data: *mut CzerniceEqBandInfo) {
+        if data.is_null() {
+            unsafe { *count = self.eq_info.len() as u32; }
         } else {
             unsafe {
-                ptr::copy(self.eq_info.as_ptr(), data, *count);
+                ptr::copy(self.eq_info.as_ptr(), data, *count as usize);
             }
         }
     }
