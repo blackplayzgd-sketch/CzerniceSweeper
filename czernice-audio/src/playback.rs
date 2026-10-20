@@ -5,6 +5,9 @@ use maudio::engine::node_graph::nodes::filters::biquad::BiquadNode;
 use maudio::engine::node_graph::nodes::Node;
 use maudio::sound::Sound;
 use maudio::MaResult;
+use maudio::data_source::sources::decoder::{Decoder, Owned};
+use czernice_audio_proc_macro::java_compatible;
+use crate::effect::{CustomDelayEffectBecauseMAudioDefaultOneIsStupidDumbRetardedAndBroken, CzerniceEffect};
 use std::ptr;
 
 pub fn with_czernice_playback<F, T>(playback: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzernicePlayback) -> T {
@@ -18,19 +21,9 @@ pub fn with_czernice_playback_faulty<F, T>(playback: i64, f: F) -> MaResult<T> w
 }
 
 pub fn band_coefficients(
-    playback: &CzernicePlayback,
-    band: usize,
-    gain_db: f32,
-    sample_rate: i32,
+    band_info: &CzerniceEqBandInfo,
 ) -> MaResult<[f64; 6]> {
-    // values pulled out of my ass, may need tweaking
-    // let (freq, q): (f64, f64) = match band {
-    //     0 => (200.0, 0.7),
-    //     1 => (1000.0, 1.0),
-    //     2 => (4000.0, 0.75),
-    //     _ => return Err(MaudioError::other("band index out of bounds")),
-    // };
-    let CzerniceEqBandInfo { frequency, q, .. } = playback.eq_info[band];
+    let CzerniceEqBandInfo { frequency, q, gain_db, sample_rate } = band_info.clone();
 
     let a = 10.0_f64.powf(gain_db as f64 / 40.0);
     let w = std::f64::consts::TAU * frequency / sample_rate as f64;
@@ -124,11 +117,11 @@ impl CzernicePlayback {
     pub fn set_eq_gain(&mut self, si: *mut CzerniceEqGainModificationSubmitInfo) -> MaResult<()> {
         let si = unsafe { si.as_ref().unwrap() };
 
-        let coefficients = band_coefficients(self, si.band, si.gain_db, si.sample_rate as i32)?;
-
         let curr: &mut CzerniceEqBandInfo = &mut self.eq_info[si.band];
         curr.gain_db = si.gain_db;
         curr.sample_rate = si.sample_rate;
+
+        let coefficients = band_coefficients(curr)?;
 
         self.eq[si.band].reinit(coefficients[0], coefficients[1], coefficients[2], coefficients[3], coefficients[4], coefficients[5])
     }
@@ -172,12 +165,10 @@ impl CzernicePlayback {
     }
 
     pub fn set_sample_rate_reduction(&self, sample_rate_reduction: u32) {
-        let reduction = sample_rate_reduction.clamp(1, 256);
-        self.effect.set_rate_divisor(reduction);
+        self.effect.set_rate_divisor(sample_rate_reduction);
     }
 
     pub fn set_bit_depth(&self, bit_depth: u32) {
-        let depth = bit_depth.clamp(0, 32);
-        self.effect.set_bit_depth(depth);
+        self.effect.set_bit_depth(bit_depth);
     }
 }
