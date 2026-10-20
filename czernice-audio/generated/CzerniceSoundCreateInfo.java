@@ -19,7 +19,6 @@ import static net.xoknox.czernicesweeper.czerniceaudio.mem.MemoryUtil.*;
  *     u32 data_count,
  *     u32 sample_rate,
  *     u32 channels,
- *     usize num_filters,
  *     *const CzerniceEqBandInfo p_eq_info,
  *     u32 eq_info_count,
  *     f32 reverb_delay,
@@ -39,7 +38,6 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
                 OF_DATA_COUNT,
                 OF_SAMPLE_RATE,
                 OF_CHANNELS,
-                OF_NUM_FILTERS,
                 OF_P_EQ_INFO,
                 OF_EQ_INFO_COUNT,
                 OF_REVERB_DELAY,
@@ -55,7 +53,6 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
                 __member(4),
                 __member(4),
                 __member(4),
-                __member(8),
                 __member(POINTER_SIZE),
                 __member(4),
                 __member(4),
@@ -73,15 +70,14 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
         OF_DATA_COUNT = layout.offsetof(1);
         OF_SAMPLE_RATE = layout.offsetof(2);
         OF_CHANNELS = layout.offsetof(3);
-        OF_NUM_FILTERS = layout.offsetof(4);
-        OF_P_EQ_INFO = layout.offsetof(5);
-        OF_EQ_INFO_COUNT = layout.offsetof(6);
-        OF_REVERB_DELAY = layout.offsetof(7);
-        OF_WET = layout.offsetof(8);
-        OF_DRY = layout.offsetof(9);
-        OF_FEEDBACK = layout.offsetof(10);
-        OF_RATE_DIVISOR = layout.offsetof(11);
-        OF_BIT_DEPTH = layout.offsetof(12);
+        OF_P_EQ_INFO = layout.offsetof(4);
+        OF_EQ_INFO_COUNT = layout.offsetof(5);
+        OF_REVERB_DELAY = layout.offsetof(6);
+        OF_WET = layout.offsetof(7);
+        OF_DRY = layout.offsetof(8);
+        OF_FEEDBACK = layout.offsetof(9);
+        OF_RATE_DIVISOR = layout.offsetof(10);
+        OF_BIT_DEPTH = layout.offsetof(11);
     }
 
     protected CzerniceSoundCreateInfo(long address, @Nullable ByteBuffer container) {
@@ -108,8 +104,6 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
 
     public int channels() { return nchannels(address()); }
 
-    public long numFilters() { return nnumFilters(address()); }
-
     public CzerniceEqBandInfo.Buffer pEqInfo() { return npEqInfo(address()); }
 
     public int eqInfoCount() { return neqInfoCount(address()); }
@@ -133,8 +127,6 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
 
     public CzerniceSoundCreateInfo channels(int value) { nchannels(address(), value); return this; }
 
-    public CzerniceSoundCreateInfo numFilters(long value) { nnumFilters(address(), value); return this; }
-
     public CzerniceSoundCreateInfo pEqInfo(CzerniceEqBandInfo.Buffer value) { npEqInfo(address(), value); return this; }
 
     public CzerniceSoundCreateInfo reverbDelay(float value) { nreverbDelay(address(), value); return this; }
@@ -155,7 +147,6 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
         ByteBuffer pData,
         int sampleRate,
         int channels,
-        long numFilters,
         CzerniceEqBandInfo.Buffer pEqInfo,
         float reverbDelay,
         float wet,
@@ -167,7 +158,6 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
         pData(pData);
         sampleRate(sampleRate);
         channels(channels);
-        numFilters(numFilters);
         pEqInfo(pEqInfo);
         reverbDelay(reverbDelay);
         wet(wet);
@@ -234,8 +224,6 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
 
     public static int nchannels(long struct) { return getInt(struct + CzerniceSoundCreateInfo.OF_CHANNELS); }
 
-    public static long nnumFilters(long struct) { return getAddress(struct + CzerniceSoundCreateInfo.OF_NUM_FILTERS); }
-
     public static CzerniceEqBandInfo.Buffer npEqInfo(long struct) { return new CzerniceEqBandInfo.Buffer(struct + CzerniceSoundCreateInfo.OF_P_EQ_INFO, neqInfoCount(struct)); }
 
     public static int neqInfoCount(long struct) { return getInt(struct + CzerniceSoundCreateInfo.OF_EQ_INFO_COUNT); }
@@ -260,8 +248,6 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
     public static void nsampleRate(long struct, int value) { putInt(struct + CzerniceSoundCreateInfo.OF_SAMPLE_RATE, value); }
 
     public static void nchannels(long struct, int value) { putInt(struct + CzerniceSoundCreateInfo.OF_CHANNELS, value); }
-
-    public static void nnumFilters(long struct, long value) { putAddress(struct + CzerniceSoundCreateInfo.OF_NUM_FILTERS, value); }
 
     public static void npEqInfo(long struct, CzerniceEqBandInfo.Buffer value) { putAddress(struct + CzerniceSoundCreateInfo.OF_P_EQ_INFO, value.address()); neqInfoCount(struct, value == null ? 0 : value.remaining()); }
 

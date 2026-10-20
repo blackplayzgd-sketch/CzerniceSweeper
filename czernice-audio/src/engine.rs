@@ -24,7 +24,6 @@ pub struct CzerniceSoundCreateInfo {
     pub channels: u32,
 
     // eq stuff
-    pub num_filters: usize,
     pub p_eq_info: *const CzerniceEqBandInfo,
     pub eq_info_count: u32,
 
@@ -64,9 +63,9 @@ impl CzerniceAudioEngine {
 
         let graph = sound.node_graph();
 
-        let mut filters = Vec::with_capacity(ci.num_filters);
+        let mut filters = Vec::with_capacity(ci.eq_info_count as usize);
         let eq_info = unsafe { slice::from_raw_parts(ci.p_eq_info, ci.eq_info_count as usize) };
-        for i in 0..ci.num_filters {
+        for i in 0..ci.eq_info_count as usize {
             let band_data = &eq_info[i];
             let coefficients = band_coefficients(band_data)?;
 
@@ -86,11 +85,11 @@ impl CzerniceAudioEngine {
 
         sound.as_node().attach_output_bus(0, &filters[0].as_node(), 0)?;
 
-        for i in 0 .. (ci.num_filters - 1) {
+        for i in 0 .. (ci.eq_info_count as usize - 1) {
             filters[i].as_node().attach_output_bus(0, &filters[i + 1].as_node(), 0)?;
         }
 
-        filters[ci.num_filters - 1].as_node().attach_output_bus(0, &effect.as_node(), 0)?;
+        filters[ci.eq_info_count as usize - 1].as_node().attach_output_bus(0, &effect.as_node(), 0)?;
         effect.as_node().attach_output_bus(0, &delay.as_node(), 0)?;
         delay.as_node().attach_output_bus(0, &graph.endpoint(), 0)?;
 
