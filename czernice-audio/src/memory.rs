@@ -13,7 +13,14 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_mem_MemoryUtil, (env, class
     // Allocation
     fn nmalloc_1aligned(align: jlong, size: jlong) -> jlong {
         unsafe {
-            libc::aligned_alloc(align as size_t, size as size_t).addr() as jlong
+            #[cfg(target_os = "linux")]
+            {
+                libc::aligned_alloc(align as size_t, size as size_t).addr() as jlong
+            }
+            #[cfg(target_os = "windows")]
+            {
+                libc::aligned_malloc(align as size_t, size as size_t) as jlong
+            }
         }
     }
 
