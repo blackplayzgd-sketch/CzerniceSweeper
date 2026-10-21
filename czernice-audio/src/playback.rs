@@ -20,7 +20,7 @@ pub fn with_czernice_playback_faulty<F, T>(playback: i64, f: F) -> MaResult<T> w
 
 pub fn band_coefficients(
     band_info: &CzerniceEqBandInfo,
-) -> MaResult<[f64; 6]> {
+) -> [f64; 6] {
     let CzerniceEqBandInfo { frequency, q, gain_db, sample_rate } = band_info.clone();
 
     let a = 10.0_f64.powf(gain_db as f64 / 40.0);
@@ -28,14 +28,14 @@ pub fn band_coefficients(
     let alpha = w.sin() / (2.0 * q);
     let c = w.cos();
 
-    Ok([
+    [
         1.0 + alpha * a,
         -2.0 * c,
         1.0 - alpha * a,
         1.0 + alpha / a,
         -2.0 * c,
         1.0 - alpha / a,
-    ])
+    ]
 }
 
 pub struct CzernicePlayback {
@@ -133,7 +133,7 @@ impl CzernicePlayback {
         curr.gain_db = si.gain_db;
         curr.sample_rate = si.sample_rate;
 
-        let coefficients = band_coefficients(curr)?;
+        let coefficients = band_coefficients(curr);
 
         self.eq[si.band].reinit(coefficients[0], coefficients[1], coefficients[2], coefficients[3], coefficients[4], coefficients[5])
     }

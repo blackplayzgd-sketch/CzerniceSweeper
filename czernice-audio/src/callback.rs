@@ -16,14 +16,17 @@ pub unsafe extern "C" fn on_czernice_sound_end(
 
     let data = unsafe { Box::from_raw(user_data as *mut CzerniceCallbackData) };
 
-    data.jvm.attach_current_thread(|env| {
-        let obj = data.callback.as_obj();
-        // ts shit so ass lifetime error so i have to map this value :wilted_rose:
-        env.call_method(
-            obj,
-            jni_str!("run"),
-            jni_sig!("()V"),
-            &[]
-        ).map(|_| ())
-    }).unwrap();
+    // retarded code is retarded and something something calling retire sounds fucks this function midway through the call
+    std::thread::spawn(move || {
+        data.jvm.attach_current_thread(|env| {
+            let obj = data.callback.as_obj();
+            // ts shit so ass lifetime error so i have to map this value :wilted_rose:
+            env.call_method(
+                obj,
+                jni_str!("run"),
+                jni_sig!("()V"),
+                &[]
+            ).map(|_| ())
+        }).unwrap();
+    });
 }

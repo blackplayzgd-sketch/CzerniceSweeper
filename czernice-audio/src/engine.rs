@@ -67,7 +67,7 @@ impl CzerniceAudioEngine {
         let eq_info = unsafe { slice::from_raw_parts(ci.p_eq_info, ci.eq_info_count as usize) };
         for i in 0..ci.eq_info_count as usize {
             let band_data = &eq_info[i];
-            let coefficients = band_coefficients(band_data)?;
+            let coefficients = band_coefficients(band_data);
 
             let filter = BiquadNodeBuilder::new(&graph, ci.channels, coefficients[0] as f32, coefficients[1] as f32, coefficients[2] as f32, coefficients[3] as f32, coefficients[4] as f32, coefficients[5] as f32)
                 .in_channel_count(ci.channels).out_channel_count(ci.channels).build()?;
