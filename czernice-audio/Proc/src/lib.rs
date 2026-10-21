@@ -77,9 +77,10 @@ fn get_size_info(ty: &str) -> String {
         "u8" | "i8" => "1".to_string(),
         "u16" | "i16" => "2".to_string(),
         "u32" | "i32" => "4".to_string(),
-        "u64" | "i64" | "usize" => "8".to_string(),
+        "u64" | "i64" => "8".to_string(),
         "f32" => "4".to_string(),
         "f64" => "8".to_string(),
+        "usize" => "POINTER_SIZE".to_string(),
         a if a.starts_with('*') => "POINTER_SIZE".to_string(),
         a => format!("{a}.SIZEOF, {a}.ALIGNOF")
     }
@@ -260,7 +261,7 @@ pub fn java_compatible(params: TokenStream, input: TokenStream) -> TokenStream {
         let field = &java_fields[i];
         let (java_name, java_ty) = get_java_name_and_type_resolved(&java_fields, field);
 
-        let comma = (i != 0).yn(",", "");
+        let comma = (i != 0).yn(",\n", "");
 
         let p_name = field.name.replace("_count", "");
         let p_name = format!("p_{p_name}");
@@ -269,7 +270,7 @@ pub fn java_compatible(params: TokenStream, input: TokenStream) -> TokenStream {
             continue;
         }
 
-        set.push_str(&format!("{comma}\n        {java_ty} {java_name}"));
+        set.push_str(&format!("{comma}        {java_ty} {java_name}"));
     }
     set.push_str("\n    ) {\n");
     for field in &java_fields {

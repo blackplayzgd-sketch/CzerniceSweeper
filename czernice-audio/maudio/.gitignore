@@ -1,0 +1,5 @@
+/target
+/crates/maudio/tests/assets
+/crates/maudio/examples/template_*
+/.vscode
+/.diagrams

@@ -6,6 +6,7 @@ use maudio::engine::node_graph::nodes::Node;
 use maudio::sound::Sound;
 use maudio::MaResult;
 use std::ptr;
+use crate::callback::{on_czernice_sound_end, CzerniceCallbackData};
 
 pub fn with_czernice_playback<F, T>(playback: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzernicePlayback) -> T {
     let playback = unsafe { &mut *(playback.cast_unsigned() as *mut CzernicePlayback) };
@@ -72,6 +73,16 @@ pub struct CzerniceEqBandInfo {
     pub sample_rate: u32
 }
 
+#[repr(C)]
+#[java_compatible(package = "net.xoknox.czernicesweeper.czerniceaudio.structs")]
+pub struct CzerniceEqBandAddInfo {
+    pub index: usize,
+    pub frequency: f64,
+    pub q: f64,
+    pub gain_db: f32,
+    pub sample_rate: u32
+}
+
 unsafe impl Send for CzernicePlayback {}
 
 impl CzernicePlayback {
@@ -85,6 +96,10 @@ impl CzernicePlayback {
 
     pub fn stop(&self) -> MaResult<()> {
         self.sound.stop_sound()
+    }
+
+    pub fn ended(&self) -> bool {
+        self.sound.ended()
     }
 
     pub fn stop_fade(&self, millis: u64) -> MaResult<()> {
@@ -111,7 +126,7 @@ impl CzernicePlayback {
         self.sound.is_playing()
     }
 
-    pub fn set_eq_gain(&mut self, si: *mut CzerniceEqGainModificationSubmitInfo) -> MaResult<()> {
+    pub fn set_eq_gain(&mut self, si: *const CzerniceEqGainModificationSubmitInfo) -> MaResult<()> {
         let si = unsafe { si.as_ref().unwrap() };
 
         let curr: &mut CzerniceEqBandInfo = &mut self.eq_info[si.band];
@@ -123,7 +138,7 @@ impl CzernicePlayback {
         self.eq[si.band].reinit(coefficients[0], coefficients[1], coefficients[2], coefficients[3], coefficients[4], coefficients[5])
     }
 
-    pub fn set_eq_band(&mut self, si: *mut CzerniceEqBandModificationSubmitInfo) {
+    pub fn set_eq_band(&mut self, si: *const CzerniceEqBandModificationSubmitInfo) {
         let si = unsafe { si.as_ref().unwrap() };
 
         let curr: &mut CzerniceEqBandInfo = &mut self.eq_info[si.band];
@@ -167,5 +182,21 @@ impl CzernicePlayback {
 
     pub fn set_bit_depth(&self, bit_depth: u32) {
         self.effect.set_bit_depth(bit_depth);
+    }
+
+    // TODO ig
+    pub fn add_band(&self, si: *const CzerniceEqBandAddInfo) {
+        let si = unsafe { si.as_ref().unwrap() };
+        // sound -> band start -> ... -> band end -> effect
+        panic!("please wait for version update")
+    }
+
+    pub fn remove_band(&self, index: usize) {
+        panic!("pleaes wait for version update")
+    }
+
+    pub fn set_end_callback(&self, callback: CzerniceCallbackData) -> MaResult<()> {
+        // if this is ran more than once i think we leak memory?
+        maudio::sound::sound_ffi::ma_sound_set_end_callback(&self.sound, Some(on_czernice_sound_end), Box::into_raw(Box::new(callback)) as *mut _)
     }
 }

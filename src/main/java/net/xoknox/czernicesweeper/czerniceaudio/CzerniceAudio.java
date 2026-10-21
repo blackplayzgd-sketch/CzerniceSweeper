@@ -97,7 +97,15 @@ public class CzerniceAudio {
 
     public static native void ngetEqBandInfo(long sound, long count_ptr, long band_info_ptr);
 
-    public static long createEngine() { return ncreateEngine(); }
+    public static native void nsetOnEndCallback(long sound, Runnable callback);
+
+    public static long createEngine() {
+        if (ENABLED) {
+            return ncreateEngine();
+        } else {
+            return NULL;
+        }
+    }
     public static void retireEngine(long engine) {
         if (CHECKS) {
             if (engine == NULL) throw new IllegalArgumentException("Tried to retire NULL engine!");
@@ -257,6 +265,15 @@ public class CzerniceAudio {
         }
 
         ngetEqBandInfo(sound, memAddress(count), buffer == null ? 0L : buffer.address());
+    }
+
+    public static void setOnEndCallback(long sound, @Nullable Runnable callback) {
+        if (CHECKS) {
+            if (sound == NULL) throw new IllegalArgumentException("Invalid sound");
+            if (callback == null) throw new IllegalArgumentException("Callback may not be NULL!");
+        }
+
+        nsetOnEndCallback(sound, callback);
     }
 
 }

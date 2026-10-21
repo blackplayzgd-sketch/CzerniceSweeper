@@ -31,7 +31,7 @@ public class CzerniceEqGainModificationSubmitInfo extends Struct<CzerniceEqGainM
 
     static {
         Layout layout = __struct(
-                __member(8),
+                __member(POINTER_SIZE),
                 __member(4),
                 __member(4)
         );
@@ -75,7 +75,6 @@ public class CzerniceEqGainModificationSubmitInfo extends Struct<CzerniceEqGainM
 
 
     public CzerniceEqGainModificationSubmitInfo set(
-
         long band,
         float gainDb,
         int sampleRate

@@ -83,7 +83,6 @@ public class CzerniceEqBandInfo extends Struct<CzerniceEqBandInfo> {
 
 
     public CzerniceEqBandInfo set(
-
         double frequency,
         double q,
         float gainDb,

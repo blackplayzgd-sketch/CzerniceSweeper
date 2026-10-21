@@ -1,0 +1,896 @@
+//! Node graph primitives.
+//!
+//! This module provides a view of **miniaudio nodes** (`ma_node`) and the
+//! node-graph operations that can be performed on them.
+//!
+//! ## What is a node (in miniaudio)?
+//!
+//! In miniaudio, an audio **node** is a unit of processing/routing inside a **node graph**.
+//! Nodes have *input buses* and *output buses* (each bus is a multi-channel audio stream).
+//! Nodes can be connected together so that audio flows from upstream nodes into downstream
+//! nodes, potentially being mixed, filtered, delayed, split, etc.
+//!
+//! Many high-level engine objects are also nodes. For example, a `Sound` can be treated as a
+//! node for routing purposes: it can be connected to effect nodes, mixers, splitters, and
+//! ultimately to the graph endpoint.
+//!
+//! ## What is a node graph?
+//!
+//! A **node graph** is the routing/processing graph that miniaudio evaluates to produce
+//! audio output. Conceptually:
+//!
+//! - connections go from an output bus of one node to an input bus of another node,
+//! - multiple outputs can feed the same input (mixing),
+//! - the graph is evaluated as the engine/device pulls audio from the endpoint.
+//!
+//! You usually work with a graph indirectly through [`Engine`](crate::engine) and [`NodeGraph`].
+//! How nodes work in miniaudio’s node graph (conceptually)
+//!
+//! Miniaudio does allow creating custom nodes however, this is an advanced feature that is
+//! current not implemented in this crate. See the existing Node implementations instead.
+//! ## How to use nodes
+//!
+//! Most node-graph operations are provided via [`NodeOps`]. Any type that can yield an underlying
+//! `ma_node*` implements the internal [`AsNodePtr`] adapter and therefore gets the shared methods.
+//!
+//! ### Example: treating a sound as a node
+//!
+//! ```no_run
+//! use maudio::engine::{Engine, node_graph::nodes::NodeOps};
+//!
+//! let engine = Engine::new().unwrap();
+//! let sound  = engine.new_sound().unwrap();
+//!
+//! // Borrow a node view of the sound.
+//! let node = sound.as_node();
+//!
+//! // Use node-level methods.
+//! let state = node.state().unwrap();
+//! println!("node state: {:?}", state);
+//! ```
+use std::{
+    cell::Cell,
+    marker::PhantomData,
+    mem::MaybeUninit,
+    ops::{Deref, DerefMut},
+};
+
+use maudio_sys::ffi as sys;
+
+use crate::{
+    engine::{
+        node_graph::{
+            node_builder::NodeFunction,
+            node_flags::NodeFlags,
+            node_on_process::{CustomNode, ReqFramesNode},
+            node_vtable::{node_vtable, node_vtable_req_frames},
+            private_node_graph, AsNodeGraphPtr, GraphOwner, NodeGraph, NodeGraphOps, NodeGraphRef,
+        },
+        Engine,
+    },
+    AsRawRef, Binding, ErrorKinds, MaResult, MaudioError,
+};
+
+pub mod effects;
+pub mod filters;
+pub mod routing;
+pub mod source;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub enum NodeState {
+    Started,
+    Stopped,
+}
+
+impl From<NodeState> for sys::ma_node_state {
+    fn from(value: NodeState) -> Self {
+        match value {
+            NodeState::Started => sys::ma_node_state_ma_node_state_started,
+            NodeState::Stopped => sys::ma_node_state_ma_node_state_stopped,
+        }
+    }
+}
+
+impl TryFrom<sys::ma_node_state> for NodeState {
+    type Error = MaudioError;
+
+    fn try_from(value: sys::ma_pan_mode) -> Result<Self, Self::Error> {
+        match value {
+            sys::ma_node_state_ma_node_state_started => Ok(NodeState::Started),
+            sys::ma_node_state_ma_node_state_stopped => Ok(NodeState::Stopped),
+            other => Err(MaudioError::new_ma_error(ErrorKinds::unknown_enum::<
+                NodeState,
+            >(other as i64))),
+        }
+    }
+}
+
+/// Custom node implementation
+///
+/// See [`NodeBuilder`](crate::engine::node_graph::node_builder)
+pub struct Node<C> {
+    pub(crate) inner: *mut NodeInner<C>,
+}
+
+#[repr(C)]
+pub(crate) struct NodeInner<C> {
+    pub(crate) base: sys::ma_node_base,
+    pub(crate) vtable: *const sys::ma_node_vtable,
+    pub(crate) busses: NodeBusChannels,
+    pub(crate) custom: C,
+    pub(crate) op: NodeFunction,
+    pub(crate) owner: GraphOwner,
+}
+
+unsafe impl<C> Send for NodeInner<C> where C: Send {}
+unsafe impl<C> Sync for NodeInner<C> where C: Sync {}
+
+impl<C> AsRawRef for Node<C> {
+    type Raw = sys::ma_node_base;
+
+    fn as_raw(&self) -> &Self::Raw {
+        unsafe { &(*self.inner).base }
+    }
+}
+
+impl<C> Deref for Node<C>
+where
+    C: CustomNode,
+{
+    type Target = C::Inner;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &(*self.inner).custom }.inner()
+    }
+}
+
+impl<C> DerefMut for Node<C>
+where
+    C: CustomNode,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut (*self.inner).custom }.inner_mut()
+    }
+}
+
+impl<C> Node<C> {
+    pub fn as_node<'a>(&'a self) -> NodeRef<'a> {
+        let ptr = self.as_raw_ptr().cast::<sys::ma_node>();
+        NodeRef::from_ptr(ptr as *mut _)
+    }
+
+    /// Returns the owning engine, if any.
+    pub fn engine(&self) -> Option<Engine> {
+        unsafe { &*self.inner }.owner.engine().map(Engine)
+    }
+
+    /// Returns the owning node graph, if any.
+    pub fn node_graph(&self) -> Option<NodeGraph> {
+        unsafe { &*self.inner }
+            .owner
+            .graph()
+            .map(|g| NodeGraph { inner: g })
+    }
+
+    /// Returns a reference to the node graph.
+    pub fn node_graph_ref(&self) -> NodeGraphRef
+    where
+        C: CustomNode,
+    {
+        let ptr = node_ffi::ma_node_get_node_graph(self);
+        NodeGraphRef {
+            inner: ptr,
+            owner: unsafe { &*self.inner }.owner.clone(),
+        }
+    }
+
+    pub(crate) fn build<N>(
+        config: &mut sys::ma_node_config,
+        flags: NodeFlags,
+        custom: C,
+        node_graph: &N,
+        op: NodeFunction,
+        busses: &NodeBusChannelsConfig,
+    ) -> MaResult<Node<C>>
+    where
+        C: CustomNode,
+        N: AsNodeGraphPtr,
+    {
+        let busses = busses.build_nodes(node_graph);
+
+        let vtable = node_vtable::<C>(busses.inputs.len() as u8, busses.outputs.len() as u8, flags);
+
+        config.vtable = vtable;
+        config.inputBusCount = busses.inputs.len() as u32;
+        config.outputBusCount = busses.outputs.len() as u32;
+        config.pInputChannels = busses.inputs.as_ptr();
+        config.pOutputChannels = busses.outputs.as_ptr();
+
+        // We must cast and access fields of this struct later.
+        // Ensure base has a stable address before passing it to ma_node_init
+        let mut inner = Box::new(NodeInner {
+            base: unsafe { MaybeUninit::zeroed().assume_init() },
+            vtable,
+            busses,
+            custom,
+            op,
+            owner: private_node_graph::clone_owner(node_graph),
+        });
+
+        let base_ptr = core::ptr::addr_of_mut!(inner.base);
+
+        node_ffi::ma_node_init(node_graph, config, base_ptr.cast())?;
+
+        let inner_ptr = Box::into_raw(inner);
+
+        debug_assert_eq!(
+            unsafe { core::ptr::addr_of_mut!((*inner_ptr).base) }.cast::<u8>(),
+            inner_ptr.cast::<u8>(),
+        );
+
+        Ok(Node { inner: inner_ptr })
+    }
+
+    pub(crate) fn build_required_frames<N>(
+        config: &mut sys::ma_node_config,
+        flags: NodeFlags,
+        custom: C,
+        node_graph: &N,
+        op: NodeFunction,
+        busses: &NodeBusChannelsConfig,
+    ) -> MaResult<Node<C>>
+    where
+        C: CustomNode + ReqFramesNode,
+        N: AsNodeGraphPtr,
+    {
+        let busses = busses.build_nodes(node_graph);
+        let vtable = node_vtable_req_frames::<C>(
+            busses.inputs.len() as u8,
+            busses.outputs.len() as u8,
+            flags,
+        );
+
+        config.vtable = vtable;
+        config.inputBusCount = busses.inputs.len() as u32;
+        config.outputBusCount = busses.outputs.len() as u32;
+        config.pInputChannels = busses.inputs.as_ptr();
+        config.pOutputChannels = busses.outputs.as_ptr();
+
+        // We must cast and access fields of this struct later.
+        // Ensure base has a stable address before passing it to ma_node_init
+        let mut inner = Box::new(NodeInner {
+            base: unsafe { std::mem::MaybeUninit::zeroed().assume_init() },
+            vtable,
+            busses,
+            custom,
+            op,
+            owner: private_node_graph::clone_owner(node_graph),
+        });
+
+        let base_ptr = core::ptr::addr_of_mut!(inner.base);
+
+        node_ffi::ma_node_init(node_graph, config, base_ptr.cast())?;
+
+        let inner_ptr = Box::into_raw(inner);
+
+        debug_assert_eq!(
+            unsafe { core::ptr::addr_of_mut!((*inner_ptr).base) }.cast::<u8>(),
+            inner_ptr.cast::<u8>(),
+        );
+
+        Ok(Node { inner: inner_ptr })
+    }
+}
+
+pub(crate) struct NodeBusChannels {
+    pub(crate) inputs: Vec<u32>,
+    pub(crate) outputs: Vec<u32>,
+}
+
+pub(crate) struct NodeBusChannelsConfig {
+    pub(crate) inputs: Vec<Option<u32>>,
+    pub(crate) outputs: Vec<Option<u32>>,
+}
+
+impl NodeBusChannelsConfig {
+    pub(crate) fn build_nodes<N: AsNodeGraphPtr + ?Sized>(
+        &self,
+        node_graph: &N,
+    ) -> NodeBusChannels {
+        let graph_channels = node_graph.channels();
+
+        let inputs: Vec<u32> = self
+            .inputs
+            .iter()
+            .map(|b| b.unwrap_or(graph_channels))
+            .collect();
+        let outputs: Vec<u32> = self
+            .outputs
+            .iter()
+            .map(|b| b.unwrap_or(graph_channels))
+            .collect();
+
+        NodeBusChannels { inputs, outputs }
+    }
+
+    /// Initialized 1 input and 1 output bus
+    pub(crate) fn new(inputs: usize, outputs: usize, channels: Option<u32>) -> Self {
+        Self {
+            inputs: vec![channels; inputs],
+            outputs: vec![channels; outputs],
+        }
+    }
+
+    pub(crate) fn set_inputs(&mut self, busses: &[u32]) {
+        if busses.is_empty() || busses.contains(&0) {
+            return;
+        }
+        self.inputs.clear();
+        for bus in busses {
+            self.inputs.push(Some(*bus));
+        }
+    }
+
+    pub(crate) fn set_outputs(&mut self, busses: &[u32]) {
+        if busses.is_empty() || busses.contains(&0) {
+            return;
+        }
+        self.outputs.clear();
+        for bus in busses {
+            self.outputs.push(Some(*bus));
+        }
+    }
+
+    pub(crate) fn change_chanels_in(&mut self, index: usize, channels: u32) {
+        if index >= self.inputs.len() {
+            return;
+        };
+        self.inputs[index] = Some(channels);
+    }
+
+    pub(crate) fn change_chanels_out(&mut self, index: usize, channels: u32) {
+        if index >= self.outputs.len() {
+            return;
+        };
+        self.outputs[index] = Some(channels);
+    }
+
+    pub(crate) fn add_input_bus(&mut self, channels: Option<u32>) {
+        if let Some(channels) = channels {
+            if channels == 0 {
+                return;
+            }
+        }
+        self.inputs.push(channels);
+    }
+
+    pub(crate) fn add_output_bus(&mut self, channels: Option<u32>) {
+        if let Some(channels) = channels {
+            if channels == 0 {
+                return;
+            }
+        }
+        self.outputs.push(channels);
+    }
+}
+
+/// A borrowed view of a `Node` of any kind
+#[derive(Clone, Copy)]
+pub struct NodeRef<'a> {
+    ptr: *mut sys::ma_node,
+    _marker: PhantomData<&'a ()>,
+    _not_sync: PhantomData<Cell<()>>,
+}
+
+impl Binding for NodeRef<'_> {
+    type Raw = *mut sys::ma_node;
+
+    fn to_raw(&self) -> Self::Raw {
+        self.ptr
+    }
+}
+
+impl<'a> NodeRef<'a> {
+    pub(crate) fn from_ptr(ptr: *mut sys::ma_node) -> Self {
+        Self {
+            ptr,
+            _marker: PhantomData,
+            _not_sync: PhantomData,
+        }
+    }
+}
+
+/// Allows the AsNodePtr trait to stay public and the node_ptr mothod to stay private
+///
+/// node_ptr allows any custom node to be passed around as a Node and access the methods on NodeOps implicitly
+pub(crate) mod private_node {
+    use crate::{
+        data_source::AsSourcePtr,
+        engine::node_graph::nodes::{
+            effects::delay::DelayNode,
+            filters::{
+                biquad::BiquadNode, hishelf::HiShelfNode, hpf::HpfNode, loshelf::LoShelfNode,
+                lpf::LpfNode, notch::NotchNode, peak::PeakNode,
+            },
+            routing::splitter::SplitterNode,
+            source::source_node::{AttachedSourceNode, SourceNode},
+        },
+    };
+
+    use super::*;
+    use maudio_sys::ffi as sys;
+
+    pub trait NodePtrProvider<T: ?Sized> {
+        fn as_node_ptr(t: &T) -> *mut sys::ma_node;
+    }
+
+    pub struct NodeProvider;
+    pub struct NodeRefProvider;
+    pub struct DelayNodeProvider;
+    pub struct BiquadNodeProvider;
+    pub struct HiShelfNodeProvider;
+    pub struct HpfNodeProvider;
+    pub struct LoShelfNodeProvider;
+    pub struct LpfNodeProvider;
+    pub struct NotchNodeProvider;
+    pub struct PeakNodeProvider;
+    pub struct SplitterNodeProvider;
+    pub struct SourceNodeProvider;
+    pub struct AttachedSourceNodeProvider;
+
+    impl<C: CustomNode> NodePtrProvider<Node<C>> for NodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &Node<C>) -> *mut sys::ma_node {
+            t.as_raw_ptr() as *mut _
+        }
+    }
+
+    impl<'a> NodePtrProvider<NodeRef<'a>> for NodeRefProvider {
+        #[inline]
+        fn as_node_ptr(t: &NodeRef<'a>) -> *mut sys::ma_node {
+            t.to_raw()
+        }
+    }
+
+    impl NodePtrProvider<DelayNode> for DelayNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &DelayNode) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl NodePtrProvider<BiquadNode> for BiquadNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &BiquadNode) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl NodePtrProvider<HiShelfNode> for HiShelfNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &HiShelfNode) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl NodePtrProvider<HpfNode> for HpfNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &HpfNode) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl NodePtrProvider<LoShelfNode> for LoShelfNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &LoShelfNode) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl NodePtrProvider<LpfNode> for LpfNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &LpfNode) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl NodePtrProvider<NotchNode> for NotchNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &NotchNode) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl NodePtrProvider<PeakNode> for PeakNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &PeakNode) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl NodePtrProvider<SplitterNode> for SplitterNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &SplitterNode) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl<'a, S: AsSourcePtr> NodePtrProvider<SourceNode<'a, S>> for SourceNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &SourceNode<'a, S>) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    impl<S: AsSourcePtr> NodePtrProvider<AttachedSourceNode<S>> for AttachedSourceNodeProvider {
+        #[inline]
+        fn as_node_ptr(t: &AttachedSourceNode<S>) -> *mut sys::ma_node {
+            t.as_node().to_raw()
+        }
+    }
+
+    pub fn node_ptr<T: AsNodePtr + ?Sized>(t: &T) -> *mut sys::ma_node {
+        <T as AsNodePtr>::__PtrProvider::as_node_ptr(t)
+    }
+}
+
+#[doc(hidden)]
+pub trait AsNodePtr {
+    type __PtrProvider: private_node::NodePtrProvider<Self>;
+}
+
+#[doc(hidden)]
+impl<C: CustomNode> AsNodePtr for Node<C> {
+    type __PtrProvider = private_node::NodeProvider;
+}
+
+#[doc(hidden)]
+impl AsNodePtr for NodeRef<'_> {
+    type __PtrProvider = private_node::NodeRefProvider;
+}
+
+impl<T: AsNodePtr + ?Sized> NodeOps for T {}
+
+/// NodeOps trait contains shared methods for `Node` and [`NodeRef`]
+pub trait NodeOps: AsNodePtr {
+    /// Attaches `output_bus` of this node to `other_node_input_bus` of `other_node`.
+    fn attach_output_bus<P: AsNodePtr + ?Sized>(
+        &self,
+        output_bus: u32,
+        other_node: &P,
+        other_node_input_bus: u32,
+    ) -> MaResult<()> {
+        node_ffi::ma_node_attach_output_bus(self, output_bus, other_node, other_node_input_bus)
+    }
+
+    /// Detaches the specified output bus from its connected input bus.
+    fn detach_output_bus(&self, output_bus: u32) -> MaResult<()> {
+        node_ffi::ma_node_detach_output_bus(self, output_bus)
+    }
+
+    /// Detaches all output buses from their connected input buses.
+    fn detach_all_outputs(&self) -> MaResult<()> {
+        node_ffi::ma_node_detach_all_output_buses(self)
+    }
+
+    /// Returns the number of input buses.
+    fn in_bus_count(&self) -> u32 {
+        node_ffi::ma_node_get_input_bus_count(self)
+    }
+
+    /// Returns the number of output buses.
+    fn out_bus_count(&self) -> u32 {
+        node_ffi::ma_node_get_output_bus_count(self)
+    }
+
+    /// Returns the channel count for the given input bus.
+    fn input_channels(&self, in_bus_index: u32) -> u32 {
+        node_ffi::ma_node_get_input_channels(self, in_bus_index)
+    }
+
+    /// Returns the channel count for the given output bus.
+    fn output_channels(&self, out_bus_index: u32) -> u32 {
+        node_ffi::ma_node_get_output_channels(self, out_bus_index)
+    }
+
+    /// Returns the volume for the given output bus.
+    fn output_bus_volume(&self, out_bus_index: u32) -> f32 {
+        node_ffi::ma_node_get_output_bus_volume(self, out_bus_index)
+    }
+
+    /// Sets the volume for the given output bus.
+    fn set_output_bus_volume(&self, out_bus_index: u32, volume: f32) -> MaResult<()> {
+        node_ffi::ma_node_set_output_bus_volume(self, out_bus_index, volume)
+    }
+
+    /// Returns the current node state. The state does not update when a sound finishes playing.
+    ///
+    /// The node state only reflects whether the node has been explicitly started or
+    /// stopped. It does not automatically change to [`NodeState::Stopped`] when the
+    /// data source reaches the end of playback.
+    fn state(&self) -> MaResult<NodeState> {
+        node_ffi::ma_node_get_state(self)
+    }
+
+    fn set_state(&self, state: NodeState) -> MaResult<()> {
+        node_ffi::ma_node_set_state(self, state)
+    }
+
+    /// Sets the current node state.
+    fn state_time(&self, state: NodeState) -> u64 {
+        node_ffi::ma_node_get_state_time(self, state)
+    }
+
+    /// Returns the global time (in PCM frames) at which `state` becomes active.
+    fn set_state_time(&self, state: NodeState, global_time: u64) -> MaResult<()> {
+        node_ffi::ma_node_set_state_time(self, state, global_time)
+    }
+
+    /// Sets the global time (in PCM frames) at which `state` becomes active.
+    fn state_by_time(&self, global_time: u64) -> MaResult<NodeState> {
+        node_ffi::ma_node_get_state_by_time(self, global_time)
+    }
+
+    /// Returns the node state over the time range `[global_time_beg, global_time_end)`.
+    fn state_by_time_range(
+        &self,
+        global_time_beg: u64,
+        global_time_end: u64,
+    ) -> MaResult<NodeState> {
+        node_ffi::ma_node_get_state_by_time_range(self, global_time_beg, global_time_end)
+    }
+
+    /// Returns the current local time (in PCM frames) of the node.
+    fn time(&self) -> u64 {
+        node_ffi::ma_node_get_time(self)
+    }
+
+    /// Sets the current local time (in PCM frames) of the node.
+    fn set_time(&self, local_time: u64) -> MaResult<()> {
+        node_ffi::ma_node_set_time(self, local_time)
+    }
+}
+
+pub(super) mod node_ffi {
+    use maudio_sys::ffi as sys;
+
+    use crate::{
+        engine::node_graph::{
+            nodes::{private_node, AsNodePtr, Node, NodeState},
+            private_node_graph, AsNodeGraphPtr, NodeGraph,
+        },
+        AllocationCallbacks, AsRawRef, Binding, MaResult, MaudioError,
+    };
+
+    // Do not expose to public API. Used internally by ma_node_init
+    #[inline]
+    pub(crate) fn _ma_node_get_heap_size(
+        node_graph: &mut NodeGraph,
+        config: *const sys::ma_node_config,
+    ) -> usize {
+        let mut heap_size: usize = 0;
+        unsafe { sys::ma_node_get_heap_size(node_graph.to_raw(), config, &mut heap_size) };
+        heap_size
+    }
+
+    // Do not expose to public API. Used internally by ma_node_init
+    #[inline]
+    pub(crate) fn _ma_node_init_preallocated(
+        node_graph: &mut NodeGraph,
+        config: *const sys::ma_node_config,
+        heap: *mut core::ffi::c_void,
+        node: *mut sys::ma_node,
+    ) -> sys::ma_result {
+        unsafe { sys::ma_node_init_preallocated(node_graph.to_raw(), config, heap, node) }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_init<N: AsNodeGraphPtr>(
+        node_graph: &N,
+        config: &sys::ma_node_config,
+        node: *mut sys::ma_node,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_node_init(
+                private_node_graph::node_graph_ptr(node_graph),
+                config,
+                AllocationCallbacks::cb_ptr(),
+                node,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_uninit<C>(node: &mut Node<C>) {
+        unsafe { sys::ma_node_uninit(node.as_raw_ptr() as *mut _, AllocationCallbacks::cb_ptr()) }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_node_graph<P: AsNodePtr + ?Sized>(
+        node: &P,
+    ) -> *mut sys::ma_node_graph {
+        unsafe { sys::ma_node_get_node_graph(private_node::node_ptr(node) as *const _) }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_input_bus_count<P: AsNodePtr + ?Sized>(node: &P) -> u32 {
+        unsafe { sys::ma_node_get_input_bus_count(private_node::node_ptr(node) as *const _) }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_output_bus_count<P: AsNodePtr + ?Sized>(node: &P) -> u32 {
+        unsafe { sys::ma_node_get_output_bus_count(private_node::node_ptr(node) as *const _) }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_input_channels<P: AsNodePtr + ?Sized>(
+        node: &P,
+        input_bus_index: u32,
+    ) -> u32 {
+        unsafe {
+            sys::ma_node_get_input_channels(
+                private_node::node_ptr(node) as *const _,
+                input_bus_index,
+            )
+        }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_output_channels<P: AsNodePtr + ?Sized>(
+        node: &P,
+        output_bus_index: u32,
+    ) -> u32 {
+        unsafe {
+            sys::ma_node_get_output_channels(
+                private_node::node_ptr(node) as *const _,
+                output_bus_index,
+            )
+        }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_attach_output_bus<P: AsNodePtr + ?Sized, Q: AsNodePtr + ?Sized>(
+        node: &P,
+        output_bus_index: u32,
+        other_node: &Q,
+        other_node_input_bus_index: u32,
+    ) -> MaResult<()> {
+        unsafe {
+            let res = sys::ma_node_attach_output_bus(
+                private_node::node_ptr(node),
+                output_bus_index,
+                private_node::node_ptr(other_node),
+                other_node_input_bus_index,
+            );
+            MaudioError::check(res)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_detach_output_bus<P: AsNodePtr + ?Sized>(
+        node: &P,
+        output_bus_index: u32,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_node_detach_output_bus(private_node::node_ptr(node), output_bus_index)
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_detach_all_output_buses<P: AsNodePtr + ?Sized>(node: &P) -> MaResult<()> {
+        let res = unsafe { sys::ma_node_detach_all_output_buses(private_node::node_ptr(node)) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_set_output_bus_volume<P: AsNodePtr + ?Sized>(
+        node: &P,
+        output_bus_index: sys::ma_uint32,
+        volume: f32,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_node_set_output_bus_volume(
+                private_node::node_ptr(node),
+                output_bus_index,
+                volume,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_output_bus_volume<P: AsNodePtr + ?Sized>(
+        node: &P,
+        output_bus_index: sys::ma_uint32,
+    ) -> f32 {
+        unsafe {
+            sys::ma_node_get_output_bus_volume(private_node::node_ptr(node), output_bus_index)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_set_state<P: AsNodePtr + ?Sized>(
+        node: &P,
+        state: NodeState,
+    ) -> MaResult<()> {
+        let res = unsafe { sys::ma_node_set_state(private_node::node_ptr(node), state.into()) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_state<P: AsNodePtr + ?Sized>(node: &P) -> MaResult<NodeState> {
+        let res = unsafe { sys::ma_node_get_state(private_node::node_ptr(node) as *const _) };
+        res.try_into()
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_set_state_time<P: AsNodePtr + ?Sized>(
+        node: &P,
+        state: NodeState,
+        global_time: u64,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_node_set_state_time(private_node::node_ptr(node), state.into(), global_time)
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_state_time<P: AsNodePtr + ?Sized>(node: &P, state: NodeState) -> u64 {
+        unsafe {
+            sys::ma_node_get_state_time(private_node::node_ptr(node) as *const _, state.into())
+        }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_state_by_time<P: AsNodePtr + ?Sized>(
+        node: &P,
+        global_time: u64,
+    ) -> MaResult<NodeState> {
+        let res = unsafe {
+            sys::ma_node_get_state_by_time(private_node::node_ptr(node) as *const _, global_time)
+        };
+        res.try_into()
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_state_by_time_range<P: AsNodePtr + ?Sized>(
+        node: &P,
+        global_time_beg: u64,
+        global_time_end: u64,
+    ) -> MaResult<NodeState> {
+        unsafe {
+            let res = sys::ma_node_get_state_by_time_range(
+                private_node::node_ptr(node) as *const _,
+                global_time_beg,
+                global_time_end,
+            );
+            res.try_into()
+        }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_get_time<P: AsNodePtr + ?Sized>(node: &P) -> u64 {
+        unsafe { sys::ma_node_get_time(private_node::node_ptr(node) as *const _) }
+    }
+
+    #[inline]
+    pub(crate) fn ma_node_set_time<P: AsNodePtr + ?Sized>(
+        node: &P,
+        local_time: u64,
+    ) -> MaResult<()> {
+        let res = unsafe { sys::ma_node_set_time(private_node::node_ptr(node), local_time) };
+        MaudioError::check(res)
+    }
+}
+
+impl<C> Drop for Node<C> {
+    fn drop(&mut self) {
+        node_ffi::ma_node_uninit(self);
+        drop(unsafe { Box::from_raw((*self.inner).vtable as *mut sys::ma_node_vtable) });
+        drop(unsafe { Box::from_raw(self.inner) });
+    }
+}

@@ -1,0 +1,373 @@
+use std::mem::MaybeUninit;
+
+use maudio_sys::ffi as sys;
+
+use crate::{
+    audio::{formats::Format, sample_rate::SampleRate},
+    engine::{
+        node_graph::{
+            nodes::{
+                node_ffi, private_node::PeakNodeProvider, AsNodePtr, NodeBusChannels,
+                NodeBusChannelsConfig, NodeRef,
+            },
+            private_node_graph, AsNodeGraphPtr, GraphOwner, NodeGraph, NodeGraphRef,
+        },
+        Engine,
+    },
+    AsRawRef, Binding, MaResult,
+};
+
+/// A node that applies a **peaking EQ (bell filter)** to an audio signal.
+///
+/// A peaking EQ boosts or attenuates a **band of frequencies around a center frequency**,
+/// while leaving frequencies far below/above that band mostly unchanged. This is commonly
+/// used to:
+/// - reduce resonances or “ringing” (cut at a problem frequency)
+/// - add presence/clarity (boost around mids/high-mids)
+/// - shape tone without affecting the entire low or high range
+///
+/// `PeakNode` is a node-graph wrapper around miniaudio's peak filter implementation.
+/// It is designed for real-time use inside a [`NodeGraph`], and maintains internal filter state
+/// across parameter changes.
+///
+/// ## Parameters
+/// - **gain_db**: Amount of boost/cut in decibels at the center frequency.
+///   Positive values boost, negative values cut.
+/// - **frequency**: The center frequency (Hz) of the peak/bell.
+/// - **q** (quality factor): Controls the width of the affected band.
+///   Higher Q = narrower band (more surgical). Lower Q = wider band (more gentle).
+///
+/// ## Notes
+/// After creating the filter, use [`Self::reinit`] to update parameters.
+/// This reinitializes the filter coefficients **without clearing internal state**, allowing
+/// real-time parameter changes with minimal risk of audible artifacts (clicks/pops).
+///
+/// Use [`PeakNodeBuilder`] to initialize.
+pub struct PeakNode {
+    inner: *mut sys::ma_peak_node,
+    pub(crate) owner: GraphOwner,
+    _busses: NodeBusChannels, // keep alive
+    // format is hard coded as ma_format_f32 in miniaudio `sys::ma_peak_node_config_init()`
+    // but use value in inner.peak.format anyway inside new_with_cfg_internal()
+    format: Format,
+    sample_rate: SampleRate,
+}
+
+unsafe impl Send for PeakNode {}
+
+impl Binding for PeakNode {
+    type Raw = *mut sys::ma_peak_node;
+
+    fn to_raw(&self) -> Self::Raw {
+        self.inner
+    }
+}
+
+#[doc(hidden)]
+impl AsNodePtr for PeakNode {
+    type __PtrProvider = PeakNodeProvider;
+}
+
+impl PeakNode {
+    fn new_with_cfg_internal<N: AsNodeGraphPtr + ?Sized>(
+        node_graph: &N,
+        config: &mut PeakNodeBuilder<'_, N>,
+    ) -> MaResult<Self> {
+        let busses = config.busses.build_nodes(node_graph);
+
+        config.inner.nodeConfig.inputBusCount = busses.inputs.len() as u32;
+        config.inner.nodeConfig.outputBusCount = busses.outputs.len() as u32;
+        config.inner.nodeConfig.pInputChannels = busses.inputs.as_ptr();
+        config.inner.nodeConfig.pOutputChannels = busses.outputs.as_ptr();
+
+        let mut mem: Box<std::mem::MaybeUninit<sys::ma_peak_node>> =
+            Box::new(MaybeUninit::uninit());
+
+        n_peak_ffi::ma_peak_node_init(node_graph, config.as_raw_ptr(), mem.as_mut_ptr())?;
+
+        let inner: *mut sys::ma_peak_node = Box::into_raw(mem) as *mut sys::ma_peak_node;
+
+        Ok(Self {
+            inner,
+            owner: private_node_graph::clone_owner(node_graph),
+            _busses: busses,
+            format: config.inner.peak.format.try_into().unwrap_or(Format::F32),
+            sample_rate: config.inner.peak.sampleRate.try_into()?,
+        })
+    }
+
+    /// Returns the owning engine, if any.
+    pub fn engine(&self) -> Option<Engine> {
+        self.owner.engine().map(Engine)
+    }
+
+    /// Returns the owning node graph, if any.
+    pub fn node_graph(&self) -> Option<NodeGraph> {
+        self.owner.graph().map(|g| NodeGraph { inner: g })
+    }
+
+    /// Returns a reference to the node graph.
+    pub fn node_graph_ref(&self) -> NodeGraphRef {
+        let ptr = node_ffi::ma_node_get_node_graph(self);
+        NodeGraphRef {
+            inner: ptr,
+            owner: self.owner.clone(),
+        }
+    }
+
+    pub fn reinit(&mut self, gain_db: f64, quality_factor: f64, frequency: f64) -> MaResult<()> {
+        let params = PeakNodeParams::new(self, gain_db, quality_factor, frequency);
+        n_peak_ffi::ma_peak_node_reinit(params.as_raw_ptr(), self)
+    }
+
+    /// Returns a **borrowed view** as a node in the engine's node graph.
+    ///
+    /// ### What this is for
+    ///
+    /// Use `as_node()` when you want to:
+    /// - connect this to other nodes (effects, mixers, splitters, etc.)
+    /// - insert into a custom routing graph
+    /// - query node-level state exposed by the graph
+    pub fn as_node<'a>(&'a self) -> NodeRef<'a> {
+        assert!(!self.to_raw().is_null());
+        let ptr = self.to_raw().cast::<sys::ma_node>();
+        NodeRef::from_ptr(ptr)
+    }
+}
+
+pub(crate) mod n_peak_ffi {
+    use crate::{
+        engine::node_graph::{nodes::filters::peak::PeakNode, private_node_graph, AsNodeGraphPtr},
+        AllocationCallbacks, Binding, MaResult, MaudioError,
+    };
+    use maudio_sys::ffi as sys;
+
+    #[inline]
+    pub fn ma_peak_node_init<N: AsNodeGraphPtr + ?Sized>(
+        node_graph: &N,
+        config: *const sys::ma_peak_node_config,
+        node: *mut sys::ma_peak_node,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_peak_node_init(
+                private_node_graph::node_graph_ptr(node_graph),
+                config,
+                AllocationCallbacks::cb_ptr(),
+                node,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_peak_node_uninit(node: &mut PeakNode) {
+        unsafe {
+            sys::ma_peak_node_uninit(node.to_raw(), AllocationCallbacks::cb_ptr());
+        }
+    }
+
+    #[inline]
+    pub fn ma_peak_node_reinit(
+        config: *const sys::ma_peak_config,
+        node: &mut PeakNode,
+    ) -> MaResult<()> {
+        let res = unsafe { sys::ma_peak_node_reinit(config, node.to_raw()) };
+        MaudioError::check(res)
+    }
+}
+
+impl Drop for PeakNode {
+    fn drop(&mut self) {
+        n_peak_ffi::ma_peak_node_uninit(self);
+        drop(unsafe { Box::from_raw(self.to_raw()) });
+    }
+}
+/// Builder for creating a [`PeakNode`]
+pub struct PeakNodeBuilder<'a, N: AsNodeGraphPtr + ?Sized> {
+    inner: sys::ma_peak_node_config,
+    busses: NodeBusChannelsConfig,
+    node_graph: &'a N,
+}
+
+impl<N: AsNodeGraphPtr + ?Sized> AsRawRef for PeakNodeBuilder<'_, N> {
+    type Raw = sys::ma_peak_node_config;
+
+    fn as_raw(&self) -> &Self::Raw {
+        &self.inner
+    }
+}
+
+impl<'a, N: AsNodeGraphPtr + ?Sized> PeakNodeBuilder<'a, N> {
+    pub fn new(
+        node_graph: &'a N,
+        channels: u32,
+        sample_rate: SampleRate,
+        gain_db: f64,
+        q: f64,
+        frequency: f64,
+    ) -> Self {
+        let ptr = unsafe {
+            sys::ma_peak_node_config_init(channels, sample_rate.into(), gain_db, q, frequency)
+        };
+        let busses = NodeBusChannelsConfig::new(1, 1, Some(channels));
+        Self {
+            inner: ptr,
+            busses,
+            node_graph,
+        }
+    }
+
+    /// This node can only have one input.
+    ///
+    /// This sets the channel count for input bus with the index `0`.
+    ///
+    /// Input and output channel counts may differ. However, it does not always make sense.
+    /// Do not assume that miniaudio automatically performs channel conversion.
+    /// Reinitialization will usually fail if input and output channels are different.
+    ///
+    /// Mixing nodes with different channel counts may result in malformed audio
+    /// or errors when connecting busses.
+    pub fn in_channel_count(&mut self, count: u32) -> &mut Self {
+        self.busses.change_chanels_in(0, count);
+        self
+    }
+
+    /// This node can only have one output.
+    ///
+    /// This sets the channel count for output bus with the index `0`.
+    ///
+    /// Input and output channel counts may differ. However, it does not always make sense.
+    /// Do not assume that miniaudio automatically performs channel conversion.
+    /// Reinitialization will usually fail if input and output channels are different.
+    ///
+    /// Mixing nodes with different channel counts may result in malformed audio
+    /// or errors when connecting busses.
+    pub fn out_channel_count(&mut self, count: u32) -> &mut Self {
+        self.busses.change_chanels_out(0, count);
+        self
+    }
+
+    pub fn build(&mut self) -> MaResult<PeakNode> {
+        PeakNode::new_with_cfg_internal(self.node_graph, self)
+    }
+}
+
+struct PeakNodeParams {
+    inner: sys::ma_peak_config,
+}
+
+impl AsRawRef for PeakNodeParams {
+    type Raw = sys::ma_peak_config;
+
+    fn as_raw(&self) -> &Self::Raw {
+        &self.inner
+    }
+}
+
+impl PeakNodeParams {
+    fn new(node: &PeakNode, gain_db: f64, quality_factor: f64, frequency: f64) -> Self {
+        let ptr = unsafe {
+            sys::ma_peak2_config_init(
+                node.format.into(),
+                node._busses.outputs[0],
+                node.sample_rate.into(),
+                gain_db,
+                quality_factor,
+                frequency,
+            )
+        };
+        Self { inner: ptr }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        audio::sample_rate::SampleRate,
+        engine::{node_graph::nodes::filters::peak::PeakNodeBuilder, Engine},
+    };
+
+    #[test]
+    fn test_peak_builder_channel_count() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = PeakNodeBuilder::new(&node_graph, 1, SampleRate::Sr44100, 2.0, 1.1, 2000.0)
+            .in_channel_count(2)
+            .out_channel_count(4)
+            .build()
+            .unwrap();
+        let res = node.reinit(2.0, 1.0, 2000.0);
+        assert!(res.is_err())
+    }
+
+    #[test]
+    fn test_peak_builder_basic_init() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = PeakNodeBuilder::new(&node_graph, 1, SampleRate::Sr44100, 2.0, 1.1, 2000.0)
+            .build()
+            .unwrap();
+        node.reinit(2.0, 1.0, 2000.0).unwrap();
+    }
+
+    #[test]
+    fn test_peak_multiple_reinit_updates() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = PeakNodeBuilder::new(&node_graph, 1, SampleRate::Sr44100, 0.0, 1.0, 1000.0)
+            .build()
+            .unwrap();
+
+        // Sweep parameters to ensure repeated reinit works and doesn't error.
+        for i in 0..50 {
+            let t = i as f64;
+
+            // gain in [-12, +12]
+            let gain_db = (t - 25.0) * (12.0 / 25.0);
+
+            // Q in [0.5, 5.0]
+            let q = 0.5 + (t / 49.0) * 4.5;
+
+            // freq in [50, 12000]
+            let freq = 50.0 + (t / 49.0) * (12_000.0 - 50.0);
+
+            node.reinit(gain_db, q, freq).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_peak_reinit_extreme_but_plausible_values() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node =
+            PeakNodeBuilder::new(&node_graph, 2, SampleRate::Sr48000, -6.0, 0.707, 120.0)
+                .build()
+                .unwrap();
+
+        // Very low freq (still > 0)
+        node.reinit(-3.0, 0.5, 10.0).unwrap();
+
+        // Near-Nyquist-ish (leave headroom; Nyquist is 24000 at 48k)
+        node.reinit(3.0, 2.0, 18_000.0).unwrap();
+
+        // Higher Q
+        node.reinit(0.0, 10.0, 1000.0).unwrap();
+    }
+
+    #[test]
+    fn test_peak_builder_multi_channel_init() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        // Just validate that multi-channel init + reinit works.
+        let mut node = PeakNodeBuilder::new(&node_graph, 8, SampleRate::Sr44100, 1.5, 1.0, 4000.0)
+            .build()
+            .unwrap();
+
+        node.reinit(1.5, 1.0, 4000.0).unwrap();
+    }
+}

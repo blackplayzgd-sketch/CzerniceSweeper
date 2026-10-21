@@ -31,7 +31,7 @@ public class CzerniceEqBandModificationSubmitInfo extends Struct<CzerniceEqBandM
 
     static {
         Layout layout = __struct(
-                __member(8),
+                __member(POINTER_SIZE),
                 __member(8),
                 __member(8)
         );
@@ -75,7 +75,6 @@ public class CzerniceEqBandModificationSubmitInfo extends Struct<CzerniceEqBandM
 
 
     public CzerniceEqBandModificationSubmitInfo set(
-
         long band,
         double frequency,
         double q

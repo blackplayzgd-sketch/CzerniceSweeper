@@ -324,8 +324,6 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "maudio"
 version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a8c12c69ee8b6c42705ca1ae980bbb9b0b30f278224d68849c4219a8d1430ad"
 dependencies = [
  "maudio-sys",
 ]

@@ -1,0 +1,465 @@
+use std::mem::MaybeUninit;
+
+use maudio_sys::ffi as sys;
+
+use crate::{
+    audio::{formats::Format, sample_rate::SampleRate},
+    engine::{
+        node_graph::{
+            nodes::{
+                node_ffi, private_node::HpfNodeProvider, AsNodePtr, NodeBusChannels,
+                NodeBusChannelsConfig, NodeRef,
+            },
+            private_node_graph, AsNodeGraphPtr, GraphOwner, NodeGraph, NodeGraphRef,
+        },
+        Engine,
+    },
+    AsRawRef, Binding, MaResult,
+};
+
+/// A node that applies a **high-pass filter (HPF)** to an audio signal.
+///
+/// A high-pass filter attenuates frequencies **below** a cutoff frequency,
+/// allowing higher frequencies to pass through mostly unchanged. This is commonly
+/// used to remove DC offset, rumble, handling noise, or excessive low-end buildup.
+///
+/// `HpfNode` is a node-graph wrapper around miniaudio's HPF implementation.
+/// It is designed for real-time use inside a [`NodeGraph`], and maintains internal filter state
+/// across parameter changes.
+///
+/// ## Parameters
+/// - **cutoff_frequency**: The cutoff frequency (Hz) of the high-pass filter.
+/// - **order**: The filter order (slope/steepness). Higher values produce a steeper cutoff
+///   at the cost of more processing and potentially more phase shift.
+///
+/// ## Notes
+/// After creating the filter, use [`Self::reinit`] to change the filter parameters.
+/// This reinitializes the filter coefficients without clearing the internal state.
+/// This allows filter parameters to be updated in real time without causing
+/// audible artifacts such as clicks or pops.
+///
+/// Use [`HpfNodeBuilder`] to initialize
+pub struct HpfNode {
+    inner: *mut sys::ma_hpf_node,
+    pub(crate) owner: GraphOwner,
+    _busses: NodeBusChannels, // keep alive
+    // format is hard coded as ma_format_f32 in miniaudio `sys::ma_hpf_node_config_init()`
+    // but use value in inner.hpf.format anyway inside new_with_cfg_internal()
+    format: Format,
+    order: u32,
+}
+
+unsafe impl Send for HpfNode {}
+
+impl Binding for HpfNode {
+    type Raw = *mut sys::ma_hpf_node;
+
+    fn to_raw(&self) -> Self::Raw {
+        self.inner
+    }
+}
+
+#[doc(hidden)]
+impl AsNodePtr for HpfNode {
+    type __PtrProvider = HpfNodeProvider;
+}
+
+impl HpfNode {
+    fn new_with_cfg_internal<N: AsNodeGraphPtr + ?Sized>(
+        node_graph: &N,
+        config: &mut HpfNodeBuilder<'_, N>,
+    ) -> MaResult<Self> {
+        let busses = config.busses.build_nodes(node_graph);
+
+        config.inner.nodeConfig.inputBusCount = busses.inputs.len() as u32;
+        config.inner.nodeConfig.outputBusCount = busses.outputs.len() as u32;
+        config.inner.nodeConfig.pInputChannels = busses.inputs.as_ptr();
+        config.inner.nodeConfig.pOutputChannels = busses.outputs.as_ptr();
+
+        let mut mem: Box<std::mem::MaybeUninit<sys::ma_hpf_node>> = Box::new(MaybeUninit::uninit());
+
+        n_hpf_ffi::ma_hpf_node_init(node_graph, config.as_raw_ptr(), mem.as_mut_ptr())?;
+
+        let inner: *mut sys::ma_hpf_node = Box::into_raw(mem) as *mut sys::ma_hpf_node;
+
+        Ok(Self {
+            inner,
+            owner: private_node_graph::clone_owner(node_graph),
+            _busses: busses,
+            format: config.inner.hpf.format.try_into().unwrap_or(Format::F32),
+            order: config.inner.hpf.order,
+        })
+    }
+
+    /// Returns the owning engine, if any.
+    pub fn engine(&self) -> Option<Engine> {
+        self.owner.engine().map(Engine)
+    }
+
+    /// Returns the owning node graph, if any.
+    pub fn node_graph(&self) -> Option<NodeGraph> {
+        self.owner.graph().map(|g| NodeGraph { inner: g })
+    }
+
+    /// Returns a reference to the node graph.
+    pub fn node_graph_ref(&self) -> NodeGraphRef {
+        let ptr = node_ffi::ma_node_get_node_graph(self);
+        NodeGraphRef {
+            inner: ptr,
+            owner: self.owner.clone(),
+        }
+    }
+
+    pub fn reinit(&mut self, sample_rate: SampleRate, cutoff_freq: f64) -> MaResult<()> {
+        if !cutoff_freq.is_finite()
+            || cutoff_freq <= 0.0
+            || cutoff_freq >= i32::from(sample_rate) as f64 / 2.0
+        {
+            return Err(crate::MaudioError::from_ma_result(
+                sys::ma_result_MA_INVALID_ARGS,
+            ));
+        }
+
+        let params = HpfNodeParams::new(self, sample_rate, cutoff_freq);
+        n_hpf_ffi::ma_hpf_node_reinit(params.as_raw_ptr(), self)
+    }
+
+    /// Returns a **borrowed view** as a node in the engine's node graph.
+    pub fn as_node<'a>(&'a self) -> NodeRef<'a> {
+        assert!(!self.to_raw().is_null());
+        let ptr = self.to_raw().cast::<sys::ma_node>();
+        NodeRef::from_ptr(ptr)
+    }
+}
+
+pub(crate) mod n_hpf_ffi {
+    use maudio_sys::ffi as sys;
+
+    use crate::{
+        engine::node_graph::{nodes::filters::hpf::HpfNode, private_node_graph, AsNodeGraphPtr},
+        AllocationCallbacks, Binding, MaResult, MaudioError,
+    };
+
+    #[inline]
+    pub fn ma_hpf_node_init<N: AsNodeGraphPtr + ?Sized>(
+        node_graph: &N,
+        config: *const sys::ma_hpf_node_config,
+        node: *mut sys::ma_hpf_node,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_hpf_node_init(
+                private_node_graph::node_graph_ptr(node_graph),
+                config,
+                AllocationCallbacks::cb_ptr(),
+                node,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_hpf_node_uninit(node: &mut HpfNode) {
+        unsafe {
+            sys::ma_hpf_node_uninit(node.to_raw(), AllocationCallbacks::cb_ptr());
+        }
+    }
+
+    #[inline]
+    pub fn ma_hpf_node_reinit(
+        config: *const sys::ma_hpf_config,
+        node: &mut HpfNode,
+    ) -> MaResult<()> {
+        let res = unsafe { sys::ma_hpf_node_reinit(config, node.to_raw()) };
+        MaudioError::check(res)
+    }
+}
+
+impl Drop for HpfNode {
+    fn drop(&mut self) {
+        n_hpf_ffi::ma_hpf_node_uninit(self);
+        drop(unsafe { Box::from_raw(self.to_raw()) });
+    }
+}
+
+/// Builder for creating a [`HpfNode`]
+pub struct HpfNodeBuilder<'a, N: AsNodeGraphPtr + ?Sized> {
+    inner: sys::ma_hpf_node_config,
+    busses: NodeBusChannelsConfig,
+    node_graph: &'a N,
+}
+
+impl<N: AsNodeGraphPtr + ?Sized> AsRawRef for HpfNodeBuilder<'_, N> {
+    type Raw = sys::ma_hpf_node_config;
+
+    fn as_raw(&self) -> &Self::Raw {
+        &self.inner
+    }
+}
+
+impl<'a, N: AsNodeGraphPtr + ?Sized> HpfNodeBuilder<'a, N> {
+    // TODO: Create an enum for order???
+    pub fn new(
+        node_graph: &'a N,
+        channels: u32,
+        sample_rate: SampleRate,
+        cutoff_freq: f64,
+        order: u32,
+    ) -> Self {
+        let ptr = unsafe {
+            sys::ma_hpf_node_config_init(channels, sample_rate.into(), cutoff_freq, order)
+        };
+        let busses = NodeBusChannelsConfig::new(1, 1, Some(channels));
+        HpfNodeBuilder {
+            inner: ptr,
+            busses,
+            node_graph,
+        }
+    }
+
+    /// This node can only have one input.
+    ///
+    /// This sets the channel count for input bus with the index `0`.
+    ///
+    /// Input and output channel counts may differ. However, it does not always make sense.
+    /// Do not assume that miniaudio automatically performs channel conversion.
+    /// Reinitialization will usually fail if input and output channels are different.
+    ///
+    /// Mixing nodes with different channel counts may result in malformed audio
+    /// or errors when connecting busses.
+    pub fn in_channel_count(&mut self, count: u32) -> &mut Self {
+        self.busses.change_chanels_in(0, count);
+        self
+    }
+
+    /// This node can only have one output.
+    ///
+    /// This sets the channel count for output bus with the index `0`.
+    ///
+    /// Input and output channel counts may differ. However, it does not always make sense.
+    /// Do not assume that miniaudio automatically performs channel conversion.
+    /// Reinitialization will usually fail if input and output channels are different.
+    ///
+    /// Mixing nodes with different channel counts may result in malformed audio
+    /// or errors when connecting busses.
+    pub fn out_channel_count(&mut self, count: u32) -> &mut Self {
+        self.busses.change_chanels_out(0, count);
+        self
+    }
+
+    pub fn build(&mut self) -> MaResult<HpfNode> {
+        if self.inner.hpf.channels == 0 {
+            return Err(crate::MaudioError::from_ma_result(
+                sys::ma_result_MA_INVALID_ARGS,
+            ));
+        }
+
+        let sample_rate: u32 = self.inner.hpf.sampleRate;
+        let cutoff = self.inner.hpf.cutoffFrequency;
+        if !cutoff.is_finite() || cutoff <= 0.0 || cutoff >= sample_rate as f64 / 2.0 {
+            return Err(crate::MaudioError::from_ma_result(
+                sys::ma_result_MA_INVALID_ARGS,
+            ));
+        }
+
+        HpfNode::new_with_cfg_internal(self.node_graph, self)
+    }
+}
+
+struct HpfNodeParams {
+    inner: sys::ma_hpf_config,
+}
+
+impl AsRawRef for HpfNodeParams {
+    type Raw = sys::ma_hpf_config;
+
+    fn as_raw(&self) -> &Self::Raw {
+        &self.inner
+    }
+}
+
+impl HpfNodeParams {
+    fn new(node: &HpfNode, sample_rate: SampleRate, cutoff_freq: f64) -> Self {
+        let ptr = unsafe {
+            sys::ma_hpf_config_init(
+                node.format.into(),
+                node._busses.outputs[0],
+                sample_rate.into(),
+                cutoff_freq,
+                node.order,
+            )
+        };
+        Self { inner: ptr }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        audio::sample_rate::SampleRate,
+        engine::{node_graph::nodes::filters::hpf::HpfNodeBuilder, Engine},
+    };
+
+    #[test]
+    fn test_hpf_builder_channel_count() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr44100, 1000.0, 1)
+            .in_channel_count(2)
+            .out_channel_count(4)
+            .build()
+            .unwrap();
+        let res = node.reinit(SampleRate::Sr44100, 1200.0);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_hpf_builder_basic_init() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr44100, 1000.0, 1)
+            .build()
+            .unwrap();
+        node.reinit(SampleRate::Sr44100, 1200.0).unwrap();
+    }
+
+    #[test]
+    fn test_hpf_reinit_sample_rate_change_ok() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr48000, 200.0, 2)
+            .build()
+            .unwrap();
+
+        node.reinit(SampleRate::Sr44100, 200.0).unwrap();
+    }
+
+    #[test]
+    fn test_hpf_reinit_invalid_cutoff_zero_ok_or_error() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr48000, 200.0, 2)
+            .build()
+            .unwrap();
+
+        assert!(node.reinit(SampleRate::Sr48000, 0.0).is_err());
+    }
+
+    #[test]
+    fn test_hpf_reinit_negative_cutoff_ok_or_error() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr48000, 200.0, 2)
+            .build()
+            .unwrap();
+
+        assert!(node.reinit(SampleRate::Sr48000, -1.0).is_err());
+    }
+
+    #[test]
+    fn test_hpf_channels_zero_error() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let res = HpfNodeBuilder::new(&node_graph, 0, SampleRate::Sr48000, 200.0, 2).build();
+
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_hpt_freq_zero_error() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let res = HpfNodeBuilder::new(&node_graph, 2, SampleRate::Sr48000, 0.0, 2).build();
+
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_hpf_builder_extreme_order_init_ok() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let node = HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr48000, 200.0, 32).build();
+
+        assert!(node.is_ok());
+    }
+
+    #[test]
+    fn test_hpf_builder_nan_cutoff_error() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let res = HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr48000, f64::NAN, 2).build();
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_hpf_builder_infinite_cutoff_error() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let res =
+            HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr48000, f64::INFINITY, 2).build();
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_hpf_reinit_nan_cutoff_error() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr48000, 200.0, 2)
+            .build()
+            .unwrap();
+
+        assert!(node.reinit(SampleRate::Sr48000, f64::NAN).is_err());
+    }
+
+    #[test]
+    fn test_hpf_as_node_is_non_null() {
+        use crate::engine::node_graph::nodes::private_node;
+
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let node = HpfNodeBuilder::new(&node_graph, 1, SampleRate::Sr44100, 1000.0, 1)
+            .build()
+            .unwrap();
+
+        let n = node.as_node();
+        assert!(!private_node::node_ptr(&n).is_null());
+    }
+
+    #[test]
+    fn test_hpf_create_drop_many_times() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        for _ in 0..2000 {
+            let _node = HpfNodeBuilder::new(&node_graph, 2, SampleRate::Sr48000, 200.0, 2)
+                .build()
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_hpf_reinit_stress_many_iterations() {
+        let engine = Engine::new_for_tests().unwrap();
+        let node_graph = engine.as_node_graph();
+
+        let mut node = HpfNodeBuilder::new(&node_graph, 2, SampleRate::Sr48000, 200.0, 2)
+            .build()
+            .unwrap();
+
+        for i in 0..10_000 {
+            let cutoff = 20.0 + ((i % 10_000) as f64) * 0.1; // 20..1020
+            node.reinit(SampleRate::Sr48000, cutoff).unwrap();
+        }
+    }
+}

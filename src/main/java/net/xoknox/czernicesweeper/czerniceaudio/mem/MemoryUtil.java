@@ -132,6 +132,14 @@ public class MemoryUtil {
         nfree(ptr);
     }
 
+    public static void free(Buffer buffer) {
+        if (CHECKS) {
+            if (buffer == null) throw new IllegalStateException("Cannot free a NULL pointer");
+        }
+
+        nfree(nmem_address(buffer));
+    }
+
     ///////////////////////////
     //    MEM OPERATIONS     //
     ///////////////////////////

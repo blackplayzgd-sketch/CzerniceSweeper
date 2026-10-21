@@ -82,14 +82,14 @@ public class BackgroundMusicPlayer implements IGameSettingable {
     }
 
     public void start() {
-        String[] song = getRandomSong();
-        Media media = new Media(song[0]);
-
-        player = new MediaPlayer(media);
-        setupInitialPlayer(player);
-        this.gameSettings.currSongProperty().setValue(song[1]);
-        System.out.println(song[1]);
-        updateMusicPlayer(player);
+//        String[] song = getRandomSong();
+//        Media media = new Media(song[0]);
+//
+//        player = new MediaPlayer(media);
+//        setupInitialPlayer(player);
+//        this.gameSettings.currSongProperty().setValue(song[1]);
+//        System.out.println(song[1]);
+//        updateMusicPlayer(player);
     }
 
     private void setupInitialPlayer(MediaPlayer player) {
