@@ -6,6 +6,7 @@ use maudio::engine::node_graph::nodes::Node;
 use maudio::sound::Sound;
 use maudio::MaResult;
 use std::ptr;
+use crate::callback::{on_czernice_sound_end, CzerniceCallbackData};
 
 pub fn with_czernice_playback<F, T>(playback: i64, f: F) -> MaResult<T> where F: FnOnce(&mut CzernicePlayback) -> T {
     let playback = unsafe { &mut *(playback.cast_unsigned() as *mut CzernicePlayback) };
@@ -183,16 +184,19 @@ impl CzernicePlayback {
         self.effect.set_bit_depth(bit_depth);
     }
 
+    // TODO ig
     pub fn add_band(&self, si: *const CzerniceEqBandAddInfo) {
         let si = unsafe { si.as_ref().unwrap() };
         // sound -> band start -> ... -> band end -> effect
+        panic!("please wait for version update")
     }
 
     pub fn remove_band(&self, index: usize) {
-
+        panic!("pleaes wait for version update")
     }
 
-    pub fn set_end_callback(&self, callback: ()) {
-        //maudio::sound::sound_ffi::ma_sound_set_end_callback();
+    pub fn set_end_callback(&self, callback: CzerniceCallbackData) -> MaResult<()> {
+        // if this is ran more than once i think we leak memory?
+        maudio::sound::sound_ffi::ma_sound_set_end_callback(&self.sound, Some(on_czernice_sound_end), Box::into_raw(Box::new(callback)) as *mut _)
     }
 }

@@ -23,11 +23,6 @@ supplybin = ["maudio-sys/supplybin"]
 external-lib = ["maudio-sys/external-lib"]
 worklet = ["maudio-sys/worklet"]
 
-# feature that enable examples
-example-sdl2 = ["dep:sdl2"]
-example-symphonia = ["dep:symphonia"]
-example-asio = ["dep:asio-sys"]
-
 [dependencies]
 maudio-sys = "0.1.9"
 

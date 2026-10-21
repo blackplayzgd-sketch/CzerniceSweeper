@@ -1225,9 +1225,8 @@ pub mod sound_ffi {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub fn ma_sound_set_end_callback(
-        sound: &mut Sound,
+        sound: &Sound,
         callback: sys::ma_sound_end_proc,
         user_data: *mut core::ffi::c_void,
     ) -> MaResult<()> {

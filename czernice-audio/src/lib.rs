@@ -4,15 +4,18 @@ pub mod engine;
 pub mod playback;
 pub mod effect;
 pub mod memory;
+pub mod callback;
 
 use crate::engine::{CzerniceAudioEngine, CzerniceSoundCreateInfo};
-use crate::playback::{with_czernice_playback, with_czernice_playback_faulty, CzernicePlayback, CzerniceEqBandInfo, CzerniceEqBandModificationSubmitInfo, CzerniceEqGainModificationSubmitInfo};
+use crate::playback::{with_czernice_playback, with_czernice_playback_faulty, CzernicePlayback, CzerniceEqBandInfo, CzerniceEqBandModificationSubmitInfo, CzerniceEqGainModificationSubmitInfo, CzerniceEqBandAddInfo};
 use jni::errors::{Error, LogErrorAndDefault};
 use jni::sys::{jboolean, jfloat, jint, jlong};
 use jni::{jni_sig, jni_str};
+use jni::objects::JObject;
 use maudio::MaResult;
 use mvutils::lazy;
 use mvutils::version::Version;
+use crate::callback::CzerniceCallbackData;
 
 pub trait OrDefaultWithError<T> {
     fn or_default_with_err(self, default: T) -> T;
@@ -92,6 +95,8 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_CzerniceAudio, (env, class)
     }
 
     fn verify(crash: jboolean) -> jboolean {
+        mvutils::utils::setup_private_panic_default();
+
         let matches = env.with_env::<_, bool, Error>(|e| {
             let a = e.get_static_field(class, jni_str!("EXPECTED_VERSION"), jni_sig!(int))?;
 
@@ -202,7 +207,25 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_CzerniceAudio, (env, class)
         with_czernice_playback(sound, |sound| sound.set_bit_depth(depth.cast_unsigned())).simply_err();
     }
 
-    // fn nsetOnEndCallback(sound: jlong, callback: jobject) {
-    //
-    // }
+    fn naddEqBand(sound: jlong, band_submit_info: jlong) {
+        let eq_band_submit_info = unsafe { &mut *(band_submit_info.cast_unsigned() as *mut CzerniceEqBandAddInfo) };
+        with_czernice_playback(sound, |sound| sound.add_band(eq_band_submit_info)).simply_err();
+    }
+
+    fn nremoveBand(sound: jlong, index: jlong) {
+        with_czernice_playback(sound, |sound| sound.remove_band(index.cast_unsigned() as usize)).simply_err();
+    }
+
+    fn nsetOnEndCallback(sound: jlong, callback: JObject) {
+        env.with_env::<_, _, Error>(|env| {
+            let callback = CzerniceCallbackData {
+                callback: env.new_global_ref(callback)?,
+                jvm: env.get_java_vm()?
+            };
+            with_czernice_playback(sound, move |sound| {
+                sound.set_end_callback(callback)
+            }).simply_err();
+            Ok(())
+        }).resolve::<LogErrorAndDefault>()
+    }
 });
