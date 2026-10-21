@@ -1,0 +1,693 @@
+//! Builder for constructing an [`Engine`]
+use std::sync::{atomic::AtomicBool, Arc};
+
+use maudio_sys::ffi as sys;
+
+use crate::{
+    audio::{channels::MonoExpansionMode, sample_rate::SampleRate},
+    backend::{
+        custom_backend::CustomBackend,
+        custom_context::{ContextStorage, CustomContextUserData},
+        Backend,
+    },
+    context::{Context, ContextBuilder},
+    device::{device_id::DeviceId, Device, DeviceInner},
+    engine::{
+        engine_cb_notif::engine_notification_callback,
+        process_cb::{
+            on_process_callback, CustomBackendState, EngineProcessCallback, EngineUserData,
+            ErasedBackendState,
+        },
+        resource::{private_rm, ResourceManager},
+        Engine,
+    },
+    logging::{Log, LogInner},
+    util::{device_notif::DeviceStateNotifier, proc_notif::ProcFramesNotif},
+    AllocationCallbacks, AsRawRef, Binding, MaResult,
+};
+
+pub struct EngineBuilder {
+    pub(crate) inner: sys::ma_engine_config,
+    pub(crate) playback_device_id: Option<DeviceId>,
+    pub(crate) device: Option<Arc<DeviceInner>>, // a ref count, not ownership
+    pub(crate) context: ContextStorage,          // a ref count, not ownership
+    pub(crate) log: Option<Arc<LogInner>>,       // a ref count, not ownership
+    pub(crate) resource_manager: Option<ResourceManager<f32>>, // a ref count, not ownership
+    pub(crate) process_data: EngineProcessCbData,
+    pub(crate) backend_state: Option<ErasedBackendState>,
+}
+
+pub(crate) struct EngineProcessCbData {
+    pub(crate) process_data_ptr: Option<*mut EngineUserData>,
+    pub(crate) process_data_panic: Option<Arc<AtomicBool>>,
+    pub(crate) state_notif_exists: bool,
+    pub(crate) state_notif: Option<DeviceStateNotifier>, // Always set by set_process_notifier. Dropped if state_notif_exists is false
+}
+
+unsafe impl Send for EngineBuilder {}
+
+impl AsRawRef for EngineBuilder {
+    type Raw = sys::ma_engine_config;
+
+    fn as_raw(&self) -> &Self::Raw {
+        &self.inner
+    }
+}
+
+// TODO. To add: ma_resampler_config
+impl EngineBuilder {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        let mut inner = unsafe { sys::ma_engine_config_init() };
+        if let Some(alloc) = AllocationCallbacks::clone_callbacks() {
+            inner.allocationCallbacks = alloc;
+        }
+        Self {
+            inner,
+            playback_device_id: None,
+            device: None,
+            context: ContextStorage::default(),
+            log: None,
+            resource_manager: None,
+            process_data: EngineProcessCbData {
+                process_data_ptr: None,
+                process_data_panic: None,
+                state_notif_exists: false,
+                state_notif: None,
+            },
+            backend_state: None,
+        }
+    }
+
+    pub fn logger(&mut self, log: &Log) -> &mut Self {
+        self.inner.pLog = log.to_raw();
+        self.log = Some(log.0.clone());
+        self
+    }
+
+    // If set, the caller is responsible for calling ma_engine_data_callback() in the device's data callback.
+    pub fn device(&mut self, device: &Device<f32>) -> &mut Self {
+        self.inner.pDevice = device.to_raw();
+        self.device = Some(device.inner.clone());
+        self
+    }
+
+    pub fn resource_manager(&mut self, manager: &ResourceManager<f32>) -> &mut Self {
+        self.inner.pResourceManager = private_rm::rm_ptr(manager);
+        self.resource_manager = Some(manager.clone());
+        self
+    }
+
+    /// Sets how many listeners the engine will create.
+    ///
+    /// The default is `1` listener (index `0`).
+    pub fn listener_count(&mut self, count: u32) -> &mut Self {
+        self.inner.listenerCount = count;
+        self
+    }
+
+    /// Sets up up the engine without a default device
+    ///
+    /// Data can be read manually using [`EngineReader::read_pcm_frames()`](crate::engine::EngineReader::read_pcm_frames())
+    pub fn no_device(&mut self, channels: u32, sample_rate: SampleRate) -> &mut Self {
+        self.inner.sampleRate = sample_rate.into();
+
+        self.inner.channels = channels;
+
+        self.inner.noDevice = 1;
+        self
+    }
+
+    pub fn mono_expansion_mode(&mut self, mode: MonoExpansionMode) -> &mut Self {
+        self.inner.monoExpansionMode = mode.into();
+        self
+    }
+
+    /// Controls the default amount of smoothing to apply to volume changes to sounds.
+    ///
+    /// Defaults to 0. High values means more smoothing at the expense of high latency
+    /// (will take longer to reach the new volume).
+    pub fn volume_smooth_frames(&mut self, frames: u32) -> &mut Self {
+        self.inner.defaultVolumeSmoothTimeInPCMFrames = frames;
+        self
+    }
+
+    /// Sets the playback device to use.
+    ///
+    /// If not set, the default system device is used.
+    ///
+    /// This is ignored if you are also passing in a device via [`EngineBuilder::device`]
+    /// In that scenario, you should pass the `DeviceId` to that custom `Device` instead.
+    pub fn device_id(&mut self, playback_id: &DeviceId) -> &mut Self {
+        self.inner.pPlaybackDeviceID = playback_id.as_raw_ptr() as *mut _;
+        self.playback_device_id = Some(playback_id.clone());
+        self
+    }
+
+    /// Sets the gain smoothing time in frames.
+    pub fn gain_smooth_frames(&mut self, frames: u32) -> &mut Self {
+        self.inner.gainSmoothTimeInFrames = frames;
+        self
+    }
+
+    /// Sets the gain smoothing time in milliseconds.
+    pub fn gain_smooth_millis(&mut self, millis: u32) -> &mut Self {
+        self.inner.gainSmoothTimeInMilliseconds = millis;
+        self
+    }
+
+    /// Sets the device period size (buffer size) in frames.
+    pub fn period_time_frames(&mut self, frames: u32) -> &mut Self {
+        self.inner.periodSizeInFrames = frames;
+        self
+    }
+
+    /// Sets the device period size (buffer size) in milliseconds.
+    pub fn period_time_millis(&mut self, millis: u32) -> &mut Self {
+        self.inner.periodSizeInMilliseconds = millis;
+        self
+    }
+
+    /// Sets the internal stack size used during node graph processing.
+    ///
+    /// Smaller values limit the maximum depth of the graph.
+    /// Most applications can use the default.
+    pub fn stack_size(&mut self, bytes: u32) -> &mut Self {
+        self.inner.preMixStackSizeInBytes = bytes;
+        self
+    }
+
+    /// The number of channels to use when mixing and spatializing.
+    ///
+    /// When set to 0, will use the native channel count of the device.
+    pub fn set_channels(&mut self, channels: u32) -> &mut Self {
+        self.inner.channels = channels;
+        self
+    }
+
+    /// When set to 0 will use the native sample rate of the device.
+    pub fn set_sample_rate(&mut self, sample_rate: SampleRate) -> &mut Self {
+        self.inner.sampleRate = sample_rate.into();
+        self
+    }
+
+    /// False by default, meaning the engine will be started automatically on creation.
+    ///
+    /// Requires a call to [`Engine::start()`] for a manually start
+    pub fn no_auto_start(&mut self, yes: bool) -> &mut Self {
+        self.inner.noAutoStart = yes as u32;
+        self
+    }
+
+    fn set_process_notifier(&mut self, f: Option<Box<EngineProcessCallback>>) -> ProcFramesNotif {
+        // Also set the custom device id if a custom context exists
+        if let ContextStorage::Custom(ctx) = self.context {
+            if let Some(device_id) = &self.playback_device_id {
+                let user_data = unsafe { &*ctx }.pUserData;
+                let custom_device_id =
+                    &unsafe { &*user_data.cast::<CustomContextUserData>() }.playback_device_id;
+                *custom_device_id.lock().unwrap() = Some(device_id.clone());
+            }
+        }
+
+        let channels = self.inner.channels; // engine is init with 2 channels by default
+        let state = EngineUserData::new(channels, f, self.backend_state.take());
+
+        let proc_notif = state.clone_proc_notif();
+        let proc_data_panic = state.clone_panic_flag();
+        let state_notif = state.state_notif.clone();
+
+        let state_box = Box::new(state);
+        let state_ptr = Box::into_raw(state_box);
+
+        self.inner.pProcessUserData = state_ptr.cast();
+
+        self.process_data.process_data_ptr = Some(state_ptr);
+        self.process_data.process_data_panic = Some(proc_data_panic);
+        self.process_data.state_notif = Some(state_notif);
+
+        proc_notif
+    }
+
+    /// Builds an [`Engine`] configured with a lightweight process “tick” notifier.
+    ///
+    /// Miniaudio doc:
+    /// "Fired at the end of each call to ma_engine_read_pcm_frames() ([`EngineReader::read_pcm_frames()`](crate::engine::EngineReader::read_pcm_frames())).
+    /// For engine's that manage their own internal device (the default configuration),
+    /// this will be fired from the audio thread, and you do not need to call ma_engine_read_pcm_frames()
+    /// manually in order to trigger this."
+    ///
+    /// This returns a [`ProcFramesNotif`] that is updated from the engine's realtime
+    /// processing callback (internally). Unlike a user-supplied realtime callback,
+    /// the notifier lets you react to progress *outside* the audio thread by polling
+    /// (e.g. from a UI loop, game loop, or control thread).
+    /// It can be retrieved by calling [`Engine::get_data_notifier()`] after building the `Engine`.
+    ///
+    /// ## Typical uses
+    /// - Drive a UI or progress indicator by polling processed frames.
+    /// - Perform control work when processing advances (start/stop, device switching,
+    ///   submitting commands), without doing that work in the realtime callback.
+    /// - Collect lightweight telemetry (frames processed per interval) from another
+    ///   thread.
+    ///
+    /// ## Example
+    /// Polling from a control loop:
+    ///
+    /// ```no_run
+    /// # use std::time::Duration;
+    /// # use maudio::engine::engine_builder::EngineBuilder;
+    /// # use maudio::*;
+    /// # fn main() -> maudio::MaResult<()> {
+    /// let engine = EngineBuilder::new().with_process_notifier()?;
+    /// let tick = engine.get_data_notifier().unwrap();
+    ///
+    /// loop {
+    ///     tick.take_with(|delta_frames| {
+    ///         // Runs on this thread (not the audio thread).
+    ///         // Safe place to update state, send messages, etc.
+    ///         println!("processed {delta_frames} frames");
+    ///     });
+    ///
+    ///     std::thread::sleep(Duration::from_millis(16));
+    /// }
+    /// Ok(())
+    /// }
+    /// ```
+    ///
+    /// If you truly need to run a callback on the realtime thread, use [`EngineBuilder::with_realtime_callback()`].
+    pub fn with_process_notifier(&mut self) -> MaResult<Engine> {
+        let notifier = self.set_process_notifier(None);
+        self.inner.onProcess = Some(on_process_callback);
+
+        Engine::new_with_process_data(self, Some(notifier))
+    }
+
+    /// This API installs a callback that is executed from the engine’s **real-time audio thread**
+    /// (Miniaudio’s `onProcess` hook).
+    ///
+    /// ## Real-time callback rules
+    ///
+    /// The callback `cb` **must be real-time safe**:
+    ///
+    /// - **Do not block.** Never call `Mutex::lock()` (or anything that may wait), never join threads,
+    ///   never wait on condition variables, channels, or I/O.
+    /// - **Do not perform file/network I/O** or other operations with unbounded latency.
+    /// - **Avoid allocations.** Do not allocate on the heap (`Vec`, `String`, formatting, logging).
+    /// - **Keep it fast and deterministic.** Prefer simple DSP, pointer-free loops, and preallocated state.
+    ///
+    /// ## Reentrancy
+    ///
+    /// The callback must not call back into the same engine in a way that would re-enter the
+    /// process callback. Reentrancy is suppressed: if the process callback is already running,
+    /// further invocations will be dropped.
+    ///
+    /// ## Memory validity
+    ///
+    /// - The slice passed to `cb` is borrowed from Miniaudio’s output buffer.
+    ///   It is **only valid for the duration of the callback** and must not be stored
+    ///   or referenced after the callback returns.
+    /// - The callback should not panic. If it does panic, the callback will be poisoned
+    ///   Use [`Engine::data_callback_panicked()`] to check if the callback is poisoned
+    /// - This also installs a [`ProcFramesNotifier`](crate::util::proc_notif::ProcFramesNotif).
+    ///   It can be retrieved by calling [`Engine::get_data_notifier()`] after building the `Engine`.
+    pub fn with_realtime_callback<C>(&mut self, cb: C) -> MaResult<Engine>
+    where
+        C: FnMut(&mut [f32], u32) + Send + 'static,
+    {
+        // Set state and proc notifier callback
+        let notifier = self.set_process_notifier(Some(Box::new(cb)));
+        self.inner.onProcess = Some(on_process_callback);
+
+        Engine::new_with_process_data(self, Some(notifier))
+    }
+
+    pub fn build(&mut self) -> MaResult<Engine> {
+        let _ = self.set_process_notifier(None);
+
+        if self.inner.noDevice == 0 && self.process_data.state_notif_exists {
+            self.inner.notificationCallback = Some(engine_notification_callback);
+        }
+
+        Engine::new_with_process_data(self, None)
+    }
+
+    /// Sets a [`DeviceStateNotifier`] that fires when the real time engine callback runs
+    ///
+    /// It can be retrieved by calling [`Engine::get_state_notifier()`] after building the `Engine`.
+    pub fn state_notifier(&mut self) -> &mut Self {
+        self.process_data.state_notif_exists = true;
+        self
+    }
+
+    /// Pass in a custom [`Context`] to the Engine
+    ///
+    /// This is used by the Engine when initializing the Device. If a [`Device`]
+    /// is also passed into the builder, then the Context is ignored.
+    pub fn context(&mut self, context: &Context) -> &mut Self {
+        self.inner.pContext = context.to_raw();
+        self.context = ContextStorage::BuiltIn(context.0.clone());
+        self
+    }
+
+    /// Add a custom backend to the engine
+    ///
+    /// This API will create a custom context for you, with default configuration.
+    ///
+    /// This API takes a context builder, as it must create final configuration
+    /// for the custom backend.
+    ///
+    /// Only one custom backed may be provided at one time, however
+    /// this API allows you to easily change it.
+    ///
+    /// You may also want to provide a list of prefered backends to the context
+    /// builder, or otherwise, the custom backend may not be used.
+    ///
+    /// See [`Backend`] for more information
+    pub fn custom_context<B: CustomBackend>(
+        &mut self,
+        context_builder: &mut ContextBuilder,
+    ) -> &mut Self {
+        // TODO: figure out a way to remove the unwrap
+        let context = context_builder.build_custom_engine::<B>().unwrap();
+        self.inner.pContext = context.to_raw();
+        self.context = ContextStorage::Custom(context.to_raw());
+
+        let erased_state = CustomBackendState::new_erased(&context);
+        self.backend_state = Some(erased_state);
+        self
+    }
+
+    /// Add a custom backend to the engine
+    ///
+    /// This API will create a custom context for you, with default configuration.
+    ///
+    /// Only one custom backed may be provided at one time, however
+    /// this API allows you to easily change it.
+    ///
+    /// While providing the custom backend, you should also provide
+    /// the prefered backends, or otherwise, the custom backend may
+    /// not be used.
+    ///
+    /// See [`Backend`] for more information
+    pub fn custom_backend<B: CustomBackend>(
+        &mut self,
+        prefered_backends: impl IntoIterator<Item = Backend>,
+    ) -> &mut Self {
+        let context = ContextBuilder::new()
+            .preferred_backends(prefered_backends)
+            .build_custom_engine::<B>()
+            .unwrap();
+        self.inner.pContext = context.to_raw();
+        self.context = ContextStorage::Custom(context.to_raw());
+
+        let erased_state = CustomBackendState::new_erased(&context);
+        self.backend_state = Some(erased_state);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn build_for_tests(&mut self) -> MaResult<Engine> {
+        if cfg!(feature = "ci-tests") {
+            self.no_device(2, SampleRate::Sr44100);
+        }
+        self.build()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::engine::resource::rm_builder::ResourceManagerBuilder;
+
+    use super::*;
+
+    fn build_ci_engine(mut b: EngineBuilder) -> MaResult<Engine> {
+        b.build_for_tests()
+    }
+    #[test]
+    fn test_engine_builder_new_default_build_for_tests_ok() -> MaResult<()> {
+        let engine = build_ci_engine(EngineBuilder::new())?;
+        drop(engine);
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_get_multiple_engine() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+        // no panics or double free
+        let _engine1 = sound.engine();
+        let _engine2 = sound.engine();
+        let _engine3 = sound.engine();
+    }
+
+    #[cfg(not(feature = "ci-tests"))]
+    #[test]
+    fn test_engine_builder_with_state_notifier_and_realtime_cb() {
+        use crate::util::device_notif::DeviceNotificationType;
+
+        let engine = EngineBuilder::new()
+            .state_notifier()
+            .no_auto_start(true)
+            .with_realtime_callback(|_a, _b| {})
+            .unwrap();
+        let notif = engine.get_state_notifier().unwrap();
+        assert_eq!(notif.notifications().bits(), 0);
+
+        assert!(!notif.contains(DeviceNotificationType::Started));
+        engine.start().unwrap();
+        std::thread::sleep(std::time::Duration::from_micros(50));
+        assert!(notif.contains(DeviceNotificationType::Started));
+        engine.stop().unwrap();
+    }
+
+    #[cfg(not(feature = "ci-tests"))]
+    #[test]
+    fn test_engine_builder_with_state_notifier_and_process_notif() {
+        use crate::util::device_notif::DeviceNotificationType;
+
+        let engine = EngineBuilder::new()
+            .state_notifier()
+            .no_auto_start(true)
+            .with_process_notifier()
+            .unwrap();
+        let notif = engine.get_state_notifier().unwrap();
+        assert_eq!(notif.notifications().bits(), 0);
+
+        assert!(!notif.contains(DeviceNotificationType::Started));
+        engine.start().unwrap();
+        let total = std::time::Duration::from_millis(200);
+        let start = std::time::Instant::now();
+        loop {
+            if notif.contains(DeviceNotificationType::Started) {
+                break;
+            }
+            if start.elapsed() >= total {
+                println!("Timed out");
+                break;
+            }
+        }
+        assert!(notif.contains(DeviceNotificationType::Started));
+        engine.stop().unwrap();
+    }
+
+    #[cfg(not(feature = "ci-tests"))]
+    #[test]
+    fn test_engine_builder_with_state_notifier_alone() {
+        use crate::util::device_notif::DeviceNotificationType;
+
+        let engine = EngineBuilder::new()
+            .state_notifier()
+            .no_auto_start(true)
+            .build()
+            .unwrap();
+        let notif = engine.get_state_notifier().unwrap();
+        assert_eq!(notif.notifications().bits(), 0);
+
+        assert!(!notif.contains(DeviceNotificationType::Started));
+        engine.start().unwrap();
+        std::thread::sleep(std::time::Duration::from_micros(50));
+        assert!(notif.contains(DeviceNotificationType::Started));
+        engine.stop().unwrap();
+    }
+
+    #[test]
+    fn test_engine_builder_with_realtime_callback_basic_init() {
+        let _engine = EngineBuilder::new()
+            .with_realtime_callback(|_samples, _channels| {})
+            .unwrap();
+    }
+
+    #[test]
+    fn test_engine_builder_default_trait_build_for_tests_ok() -> MaResult<()> {
+        let engine = build_ci_engine(EngineBuilder::new())?;
+        drop(engine);
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_no_device_with_channels_and_sample_rate_builds() -> MaResult<()> {
+        let mut b = EngineBuilder::new();
+        b.no_device(2, SampleRate::Sr44100);
+
+        let engine = b.build()?;
+        drop(engine);
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_listener_count_is_applied() -> MaResult<()> {
+        let mut b = EngineBuilder::new();
+        b.listener_count(3);
+
+        let engine = build_ci_engine(b)?;
+        drop(engine);
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_no_auto_start_is_applied() -> MaResult<()> {
+        let mut b = EngineBuilder::new();
+        b.no_auto_start(true);
+
+        let engine = build_ci_engine(b)?;
+        drop(engine);
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_with_process_notifier_builds_and_notifier_survives() -> MaResult<()> {
+        let mut b = EngineBuilder::new();
+        let engine = b
+            .no_device(2, SampleRate::Sr44100)
+            .with_process_notifier()?;
+
+        let tick = engine.get_data_notifier().unwrap();
+        let mut reader = engine.try_acquire_reader().unwrap();
+        let _buf = reader.read_pcm_frames(256)?;
+
+        let mut called = false;
+        tick.take_with(|delta_frames| {
+            called = true;
+            let _ = delta_frames;
+        });
+
+        drop(engine);
+
+        tick.take_with(|_delta_frames| {
+            // no-op
+        });
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_process_notifier_drop_order_notifier_then_engine() -> MaResult<()> {
+        let mut b = EngineBuilder::new();
+        let _engine = b.with_process_notifier()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_process_notifier_drop_order_engine_then_notifier() -> MaResult<()> {
+        let mut b = EngineBuilder::new();
+        let engine = b.with_process_notifier()?;
+        let tick = engine.get_data_notifier().unwrap();
+
+        drop(engine);
+        drop(tick);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_with_process_notifier_multiple_builds_no_double_free() -> MaResult<()> {
+        // This targets the `process_notifier: Option<Arc<EngineUserData>>` in the builder and the `take()`.
+        let mut b = EngineBuilder::new();
+
+        let engine1 = b.with_process_notifier()?;
+        let tick1 = engine1.get_data_notifier().unwrap();
+        drop(engine1);
+        drop(tick1);
+
+        // Re-use builder for another notifier build.
+        let engine2 = b.with_process_notifier()?;
+        let tick2 = engine2.get_data_notifier().unwrap();
+        drop(engine2);
+        drop(tick2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_build_for_tests_sets_no_device_channels_samplerate_under_feature(
+    ) -> MaResult<()> {
+        // This test is only meaningful if feature=ci-tests is enabled,
+        // but it should still be safe otherwise.
+        let mut b = EngineBuilder::new();
+        let engine = b.build_for_tests()?;
+        drop(engine);
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_set_channels_and_sample_rate_idempotent() -> MaResult<()> {
+        let mut b = EngineBuilder::new();
+        b.no_device(2, SampleRate::Sr44100)
+            .set_channels(1)
+            .set_channels(2)
+            .set_sample_rate(SampleRate::Sr44100)
+            .set_sample_rate(SampleRate::Sr44100);
+
+        let engine = b.build()?;
+        drop(engine);
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_builder_with_resource_manager() {
+        let rm = ResourceManagerBuilder::new_f32().build().unwrap();
+        let engine = EngineBuilder::new()
+            .resource_manager(&rm)
+            .build_for_tests()
+            .unwrap();
+        let _rm_ref = engine.resource_manager();
+    }
+
+    #[test]
+    fn test_engine_builder_many_with_one_resource_manager() {
+        let rm = ResourceManagerBuilder::new_f32().build().unwrap();
+        let engine1 = EngineBuilder::new()
+            .resource_manager(&rm)
+            .build_for_tests()
+            .unwrap();
+        let engine2 = EngineBuilder::new()
+            .resource_manager(&rm)
+            .build_for_tests()
+            .unwrap();
+        let engine3 = EngineBuilder::new()
+            .resource_manager(&rm)
+            .build_for_tests()
+            .unwrap();
+        let engine4 = EngineBuilder::new()
+            .resource_manager(&rm)
+            .build_for_tests()
+            .unwrap();
+        let engine5 = EngineBuilder::new()
+            .resource_manager(&rm)
+            .build_for_tests()
+            .unwrap();
+        let engine6 = EngineBuilder::new()
+            .resource_manager(&rm)
+            .build_for_tests()
+            .unwrap();
+        let _rm_ref = engine1.resource_manager();
+        let _rm_ref = engine1.resource_manager();
+        let _rm_ref = engine2.resource_manager();
+        let _rm_ref = engine3.resource_manager();
+        let _rm_ref = engine4.resource_manager();
+        let _rm_ref = engine5.resource_manager();
+        let _rm_ref = engine6.resource_manager();
+        drop(rm); // safe
+    }
+}

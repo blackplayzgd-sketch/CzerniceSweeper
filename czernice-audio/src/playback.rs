@@ -191,4 +191,8 @@ impl CzernicePlayback {
     pub fn remove_band(&self, index: usize) {
 
     }
+
+    pub fn set_end_callback(&self, callback: ()) {
+        //maudio::sound::sound_ffi::ma_sound_set_end_callback();
+    }
 }

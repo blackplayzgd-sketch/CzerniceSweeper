@@ -1,0 +1,1698 @@
+//! Sound playback primitives.
+//!
+//! This module defines [`Sound`], an engine-managed audio voice.
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use maudio_sys::ffi as sys;
+
+use crate::{
+    audio::{
+        math::vec3::Vec3,
+        pan::PanMode,
+        spatial::{attenuation::AttenuationModel, cone::Cone, positioning::Positioning},
+    },
+    data_source::{DataFormat, DataSourceRef},
+    engine::{
+        node_graph::{nodes::NodeRef, GraphOwner, NodeGraphRef},
+        Engine, EngineInner,
+    },
+    sound::{notifier::EndNotifier, sound_flags::SoundFlags, sound_group::SoundGroup},
+    util::fence::Fence,
+    Binding, MaResult, MaudioError,
+};
+
+pub mod notifier;
+pub mod sound_builder;
+pub mod sound_flags;
+pub mod sound_group;
+
+/// The initialization source for a sound.
+///
+/// Only one source may be active at a time (file path OR data source).
+#[derive(PartialEq)]
+pub enum SoundSource<'a> {
+    None,
+    #[cfg(not(windows))]
+    FileUtf8(PathBuf), // Could be better to copy the PathBuf here.
+    #[cfg(windows)]
+    FileWide(PathBuf), // Could be better to copy the PathBuf here.
+    DataSource(DataSourceRef<'a, f32>),
+}
+
+impl SoundSource<'_> {
+    pub(crate) fn is_valid(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+/// Engine-managed sound voice.
+///
+/// A `Sound` is an engine-owned playback instance backed by a data source. It can be started,
+/// stopped, seeked, spatialized, and controlled (volume/pan/pitch).
+pub struct Sound {
+    inner: *mut sys::ma_sound,
+    _engine: Arc<EngineInner>,
+    // Miniaudio stores only one ma_sound_end_proc and pUserData per ma_sound.
+    // One end_notifier at a time will be ok
+    _fence: Option<Fence>, // Ref count
+    end_notifier: Option<EndNotifier>,
+}
+
+unsafe impl Send for Sound {}
+unsafe impl Sync for Sound {}
+
+impl Binding for Sound {
+    type Raw = *mut sys::ma_sound;
+
+    fn to_raw(&self) -> Self::Raw {
+        self.inner
+    }
+}
+
+impl Sound {
+    pub fn engine(&self) -> Engine {
+        Engine(self._engine.clone())
+    }
+
+    /// Returns the underlying NodeGraph
+    pub fn node_graph(&self) -> NodeGraphRef {
+        let engine = sound_ffi::ma_sound_get_engine(self);
+        let graph = engine.cast::<sys::ma_node_graph>();
+        NodeGraphRef {
+            inner: graph,
+            owner: GraphOwner::Engine(self._engine.clone()),
+        }
+    }
+
+    /// Returns a **borrowed view** of this sound as a node in the engine's node graph.
+    pub fn as_node<'a>(&'a self) -> NodeRef<'a> {
+        assert!(!self.to_raw().is_null());
+        let ptr: *mut sys::ma_node = self.to_raw().cast::<sys::ma_node>();
+        NodeRef::from_ptr(ptr)
+    }
+
+    /// Returns the underlying data source, if any.
+    pub fn data_source(&self) -> DataSourceRef<'_, f32> {
+        sound_ffi::ma_sound_get_data_source(self)
+    }
+
+    /// Starts playback.
+    pub fn play_sound(&self) -> MaResult<()> {
+        sound_ffi::ma_sound_start(self)
+    }
+
+    /// Stops playback.
+    pub fn stop_sound(&self) -> MaResult<()> {
+        sound_ffi::ma_sound_stop(self)
+    }
+
+    /// Stops playback with a fade-out over `fade_frames` PCM frames.
+    pub fn stop_with_fade_frames(&self, fade_frames: u64) -> MaResult<()> {
+        sound_ffi::ma_sound_stop_with_fade_in_pcm_frames(self, fade_frames)
+    }
+
+    /// Stops playback with a fade-out over `fade_milis` milliseconds.
+    pub fn stop_with_fade_millis(&self, fade_milis: u64) -> MaResult<()> {
+        sound_ffi::ma_sound_stop_with_fade_in_milis(self, fade_milis)
+    }
+
+    /// Returns the sound volume.
+    pub fn volume(&self) -> f32 {
+        sound_ffi::ma_sound_get_volume(self)
+    }
+
+    /// Sets the sound volume.
+    pub fn set_volume(&self, volume: f32) {
+        sound_ffi::ma_sound_set_volume(self, volume);
+    }
+
+    /// Returns the pan value.
+    pub fn pan(&self) -> f32 {
+        sound_ffi::ma_sound_get_pan(self)
+    }
+
+    /// Sets the pan value.
+    pub fn set_pan(&self, pan: f32) {
+        sound_ffi::ma_sound_set_pan(self, pan);
+    }
+
+    /// Returns the pan mode.
+    pub fn pan_mode(&self) -> MaResult<PanMode> {
+        sound_ffi::ma_sound_get_pan_mode(self)
+    }
+
+    /// Sets the pan mode.
+    pub fn set_pan_mode(&self, mode: PanMode) {
+        sound_ffi::ma_sound_set_pan_mode(self, mode);
+    }
+
+    /// Returns the pitch multiplier.
+    pub fn pitch(&self) -> f32 {
+        sound_ffi::ma_sound_get_pitch(self)
+    }
+
+    /// Sets the pitch multiplier.
+    pub fn set_pitch(&self, pitch: f32) {
+        sound_ffi::ma_sound_set_pitch(self, pitch);
+    }
+
+    /// Returns `true` if spatialization is enabled.
+    pub fn spatialization(&self) -> bool {
+        sound_ffi::ma_sound_is_spatialization_enabled(self)
+    }
+
+    /// Enables or disables spatialization. Enabled by default.
+    pub fn set_spatialization(&self, enabled: bool) {
+        sound_ffi::ma_sound_set_spatialization_enabled(self, enabled);
+    }
+
+    /// Returns the pinned listener index.
+    pub fn pinned_listener(&self) -> u32 {
+        sound_ffi::ma_sound_get_pinned_listener_index(self)
+    }
+
+    /// Pins the sound to a specific listener.
+    pub fn set_pinned_listener(&self, listener: u32) {
+        sound_ffi::ma_sound_set_pinned_listener_index(self, listener);
+    }
+
+    /// Returns the active listener index.
+    pub fn listener(&self) -> u32 {
+        sound_ffi::ma_sound_get_listener_index(self)
+    }
+
+    /// Returns the direction from the sound to the active listener.
+    pub fn direction_to_listener(&self) -> Vec3 {
+        sound_ffi::ma_sound_get_direction_to_listener(self)
+    }
+
+    /// Returns the world-space position.
+    pub fn position(&self) -> Vec3 {
+        sound_ffi::ma_sound_get_position(self)
+    }
+
+    /// Sets the world-space position.
+    pub fn set_position(&self, vec3: Vec3) {
+        sound_ffi::ma_sound_set_position(self, vec3);
+    }
+
+    /// Returns the facing direction.
+    pub fn direction(&self) -> Vec3 {
+        sound_ffi::ma_sound_get_direction(self)
+    }
+
+    /// Sets the facing direction.
+    pub fn set_direction(&self, vec3: Vec3) {
+        sound_ffi::ma_sound_set_direction(self, vec3);
+    }
+
+    /// Returns the velocity.
+    pub fn velocity(&self) -> Vec3 {
+        sound_ffi::ma_sound_get_velocity(self)
+    }
+
+    /// Sets the velocity.
+    pub fn set_velocity(&self, vec3: Vec3) {
+        sound_ffi::ma_sound_set_velocity(self, vec3);
+    }
+
+    /// Returns the attenuation model.
+    pub fn attenuation(&self) -> MaResult<AttenuationModel> {
+        sound_ffi::ma_sound_get_attenuation_model(self)
+    }
+
+    /// Sets the attenuation model.
+    pub fn set_attenuation(&self, model: AttenuationModel) {
+        sound_ffi::ma_sound_set_attenuation_model(self, model);
+    }
+
+    /// Returns the positioning mode.
+    pub fn positioning(&self) -> MaResult<Positioning> {
+        sound_ffi::ma_sound_get_positioning(self)
+    }
+
+    /// Sets the positioning mode.
+    pub fn set_positioning(&self, positioning: Positioning) {
+        sound_ffi::ma_sound_set_positioning(self, positioning);
+    }
+
+    /// Returns the rolloff factor.
+    pub fn rolloff(&self) -> f32 {
+        sound_ffi::ma_sound_get_rolloff(self)
+    }
+
+    /// Sets the rolloff factor.
+    pub fn set_rolloff(&self, rolloff: f32) {
+        sound_ffi::ma_sound_set_rolloff(self, rolloff);
+    }
+
+    /// Returns the minimum gain.
+    pub fn min_gain(&self) -> f32 {
+        sound_ffi::ma_sound_get_min_gain(self)
+    }
+
+    /// Sets the minimum gain.
+    pub fn set_min_gain(&self, gain: f32) {
+        sound_ffi::ma_sound_set_min_gain(self, gain);
+    }
+
+    /// Returns the maximum gain.
+    pub fn max_gain(&self) -> f32 {
+        sound_ffi::ma_sound_get_max_gain(self)
+    }
+
+    /// Sets the maximum gain.
+    pub fn set_max_gain(&self, gain: f32) {
+        sound_ffi::ma_sound_set_max_gain(self, gain);
+    }
+
+    /// Returns the minimum attenuation distance.
+    pub fn min_distance(&self) -> f32 {
+        sound_ffi::ma_sound_get_min_distance(self)
+    }
+
+    /// Sets the minimum attenuation distance.
+    pub fn set_min_distance(&self, distance: f32) {
+        sound_ffi::ma_sound_set_min_distance(self, distance);
+    }
+
+    /// Returns the maximum attenuation distance.
+    pub fn max_distance(&self) -> f32 {
+        sound_ffi::ma_sound_get_max_distance(self)
+    }
+
+    /// Sets the maximum attenuation distance.
+    pub fn set_max_distance(&self, distance: f32) {
+        sound_ffi::ma_sound_set_max_distance(self, distance);
+    }
+
+    /// Returns the directional cone settings.
+    pub fn cone(&self) -> Cone {
+        sound_ffi::ma_sound_get_cone(self)
+    }
+
+    /// Sets the directional cone settings.
+    pub fn set_cone(&self, cone: Cone) {
+        sound_ffi::ma_sound_set_cone(self, cone);
+    }
+
+    /// Returns the doppler factor.
+    pub fn doppler_factor(&self) -> f32 {
+        sound_ffi::ma_sound_get_doppler_factor(self)
+    }
+
+    /// Sets the doppler factor.
+    pub fn set_doppler_factor(&self, factor: f32) {
+        sound_ffi::ma_sound_set_doppler_factor(self, factor);
+    }
+
+    /// Returns the directional attenuation factor.
+    pub fn directional_attenuation(&self) -> f32 {
+        sound_ffi::ma_sound_get_directional_attenuation_factor(self)
+    }
+
+    /// Sets the directional attenuation factor.
+    pub fn set_directional_attenuation(&self, factor: f32) {
+        sound_ffi::ma_sound_set_directional_attenuation_factor(self, factor);
+    }
+
+    /// Schedules a fade from `vol_start` to `vol_end` over `fade_length_frames` PCM frames.
+    pub fn set_fade_pcm(&self, vol_start: f32, vol_end: f32, fade_length_frames: u64) {
+        sound_ffi::ma_sound_set_fade_in_pcm_frames(self, vol_start, vol_end, fade_length_frames);
+    }
+
+    /// Schedules a fade from `vol_start` to `vol_end` over `fade_length_mili` milliseconds.
+    pub fn set_fade_mili(&self, vol_start: f32, vol_end: f32, fade_length_mili: u64) {
+        sound_ffi::ma_sound_set_fade_in_milliseconds(self, vol_start, vol_end, fade_length_mili);
+    }
+
+    /// Schedules a fade starting at `time_in_frames` (PCM frames).
+    pub fn set_fade_start_pcm(
+        &self,
+        vol_start: f32,
+        vol_end: f32,
+        fade_length_frames: u64,
+        time_in_frames: u64,
+    ) {
+        sound_ffi::ma_sound_set_fade_start_in_pcm_frames(
+            self,
+            vol_start,
+            vol_end,
+            fade_length_frames,
+            time_in_frames,
+        );
+    }
+
+    /// Schedules a fade starting at `time_in_frames` (PCM frames), specified in milliseconds.
+    pub fn set_fade_start_millis(
+        &self,
+        vol_start: f32,
+        vol_end: f32,
+        fade_length_mili: u64,
+        time_in_frames: u64,
+    ) {
+        sound_ffi::ma_sound_set_fade_start_in_milliseconds(
+            self,
+            vol_start,
+            vol_end,
+            fade_length_mili,
+            time_in_frames,
+        );
+    }
+
+    /// Returns the current fade volume multiplier.
+    pub fn current_fade_volume(&self) -> f32 {
+        sound_ffi::ma_sound_get_current_fade_volume(self)
+    }
+
+    /// Sets the scheduled start time in PCM frames.
+    pub fn set_start_time_pcm(&self, abs_time_frames: u64) {
+        sound_ffi::ma_sound_set_start_time_in_pcm_frames(self, abs_time_frames);
+    }
+
+    /// Sets the scheduled start time in milliseconds.
+    pub fn set_start_time_millis(&self, abs_time_millis: u64) {
+        sound_ffi::ma_sound_set_start_time_in_milliseconds(self, abs_time_millis);
+    }
+
+    /// Sets the scheduled stop time in PCM frames.
+    pub fn set_stop_time_pcm(&self, abs_time_frames: u64) {
+        sound_ffi::ma_sound_set_stop_time_in_pcm_frames(self, abs_time_frames);
+    }
+
+    /// Sets the scheduled stop time in milliseconds.
+    pub fn set_stop_time_millis(&self, abs_time_millis: u64) {
+        sound_ffi::ma_sound_set_stop_time_in_milliseconds(self, abs_time_millis);
+    }
+
+    /// Sets the scheduled stop time with a fade-out in PCM frames.
+    pub fn set_stop_time_with_fade_pcm(&self, stop_time_frames: u64, fade_length_frames: u64) {
+        sound_ffi::ma_sound_set_stop_time_with_fade_in_pcm_frames(
+            self,
+            stop_time_frames,
+            fade_length_frames,
+        );
+    }
+
+    /// Sets the scheduled stop time with a fade-out in milliseconds.
+    pub fn set_stop_time_with_fade_millis(&self, stop_time_millis: u64, fade_length_millis: u64) {
+        sound_ffi::ma_sound_set_stop_time_with_fade_in_milliseconds(
+            self,
+            stop_time_millis,
+            fade_length_millis,
+        );
+    }
+
+    /// Returns `true` if the sound is currently playing.
+    pub fn is_playing(&self) -> bool {
+        sound_ffi::ma_sound_is_playing(self)
+    }
+
+    /// Returns the current playback time in PCM frames.
+    pub fn time_pcm(&self) -> u64 {
+        sound_ffi::ma_sound_get_time_in_pcm_frames(self)
+    }
+
+    /// Returns the current playback time in milliseconds.
+    pub fn time_millis(&self) -> u64 {
+        sound_ffi::ma_sound_get_time_in_milliseconds(self)
+    }
+
+    /// Returns `true` if looping is enabled.
+    pub fn looping(&self) -> bool {
+        sound_ffi::ma_sound_is_looping(self)
+    }
+
+    /// Enables or disables looping.
+    pub fn set_looping(&self, looping: bool) {
+        sound_ffi::ma_sound_set_looping(self, looping);
+    }
+
+    /// Returns `true` if playback has reached the end.
+    pub fn ended(&self) -> bool {
+        sound_ffi::ma_sound_at_end(self)
+    }
+
+    /// Seeks to an absolute PCM frame index.
+    pub fn seek_to_frame(&self, frame_index: u64) -> MaResult<()> {
+        sound_ffi::ma_sound_seek_to_pcm_frame(self, frame_index)
+    }
+
+    /// Seeks to an absolute position in seconds.
+    pub fn seek_to_second(&self, seek_point_seconds: f32) -> MaResult<()> {
+        sound_ffi::ma_sound_seek_to_second(self, seek_point_seconds)
+    }
+
+    /// Returns the decoded data format of the sound.
+    pub fn data_format(&self) -> MaResult<DataFormat> {
+        sound_ffi::ma_sound_get_data_format(self)
+    }
+
+    /// Returns the cursor position in PCM frames.
+    pub fn cursor_pcm(&self) -> MaResult<u64> {
+        sound_ffi::ma_sound_get_cursor_in_pcm_frames(self)
+    }
+
+    /// Returns the total length in PCM frames.
+    pub fn length_pcm(&self) -> MaResult<u64> {
+        sound_ffi::ma_sound_get_length_in_pcm_frames(self)
+    }
+
+    /// Returns the cursor position in seconds.
+    pub fn cursor_seconds(&self) -> MaResult<f32> {
+        sound_ffi::ma_sound_get_cursor_in_seconds(self)
+    }
+
+    /// Returns the total length in seconds.
+    pub fn length_seconds(&self) -> MaResult<f32> {
+        sound_ffi::ma_sound_get_length_in_seconds(self)
+    }
+
+    pub fn set_end_callback(&mut self) -> MaResult<EndNotifier> {
+        let notifier = EndNotifier::new();
+        self.end_notifier = Some(notifier.clone());
+
+        let user_data = notifier.as_user_data_ptr();
+
+        let res = unsafe {
+            sys::ma_sound_set_end_callback(
+                self.to_raw(),
+                Some(crate::sound::notifier::on_end_callback),
+                user_data,
+            )
+        };
+        MaudioError::check(res)?;
+
+        Ok(notifier)
+    }
+}
+
+// Private methods
+impl Sound {
+    pub(crate) fn new_sound(
+        inner: *mut sys::ma_sound,
+        engine: Arc<EngineInner>,
+        fence: Option<Fence>,
+        end_notifier: Option<EndNotifier>,
+    ) -> Self {
+        Sound {
+            inner,
+            _engine: engine,
+            _fence: fence,
+            end_notifier,
+        }
+    }
+
+    pub(crate) fn init_from_file_internal(
+        sound: *mut sys::ma_sound,
+        engine: &Engine,
+        path: &Path,
+        flags: SoundFlags,
+        sound_group: Option<&SoundGroup>,
+        fence: Option<Fence>,
+    ) -> MaResult<()> {
+        #[cfg(windows)]
+        {
+            let path = crate::wide_null_terminated(path);
+
+            sound_ffi::ma_sound_init_from_file_w(engine, &path, flags, sound_group, fence, sound)
+        }
+
+        #[cfg(not(windows))]
+        {
+            let path = crate::cstring_from_path(path)?;
+
+            sound_ffi::ma_sound_init_from_file(engine, path, flags, sound_group, fence, sound)
+        }
+    }
+}
+
+impl Drop for Sound {
+    fn drop(&mut self) {
+        unsafe {
+            sys::ma_sound_uninit(self.to_raw());
+        }
+        drop(unsafe { Box::from_raw(self.to_raw()) });
+    }
+}
+
+/// Converts a gain value expressed in decibels (dB) to a linear volume factor.
+///
+/// A value of `0.0` dB corresponds to a linear factor of `1.0` (no change),
+/// negative values reduce the volume, and positive values increase it.
+///
+/// The returned value can be passed directly to [`Sound::set_volume`].
+pub fn sound_volume_db_to_linear(gain: f32) -> f32 {
+    unsafe { sys::ma_volume_db_to_linear(gain) }
+}
+
+/// Converts a linear volume factor to a gain value expressed in decibels (dB).
+///
+/// A factor of `1.0` corresponds to `0.0` dB, values less than `1.0` produce
+/// negative decibel values, and values greater than `1.0` produce positive ones.
+///
+/// This is useful for inspecting or serializing the current volume in dB.
+pub fn sound_volume_linear_to_db(factor: f32) -> f32 {
+    unsafe { sys::ma_volume_linear_to_db(factor) }
+}
+
+pub mod sound_ffi {
+    use maudio_sys::ffi as sys;
+
+    use crate::audio::channels::Channel;
+    use crate::audio::math::vec3::Vec3;
+    use crate::audio::pan::PanMode;
+    use crate::audio::spatial::{
+        attenuation::AttenuationModel, cone::Cone, positioning::Positioning,
+    };
+    use crate::data_source::AsSourcePtr;
+    use crate::data_source::{private_data_source, DataFormat, DataSourceRef};
+    use crate::util::fence::Fence;
+    use crate::{
+        engine::Engine,
+        sound::{
+            sound_builder::SoundBuilder, sound_flags::SoundFlags, sound_group::SoundGroup, Sound,
+        },
+    };
+    use crate::{AsRawRef, MaResult};
+    use crate::{Binding, MaudioError};
+
+    #[inline]
+    #[cfg(not(windows))]
+    pub fn ma_sound_init_from_file(
+        engine: &Engine,
+        path: std::ffi::CString,
+        flags: SoundFlags,
+        s_group: Option<&SoundGroup>,
+        done_fence: Option<Fence>,
+        sound: *mut sys::ma_sound,
+    ) -> MaResult<()> {
+        let s_group: *mut sys::ma_sound_group =
+            s_group.map_or(core::ptr::null_mut(), |g| g.to_raw());
+        let done_fence = done_fence.map_or(core::ptr::null_mut(), |f| f.to_raw());
+
+        let res = unsafe {
+            use crate::Binding;
+
+            sys::ma_sound_init_from_file(
+                engine.to_raw(),
+                path.as_ptr(),
+                flags.bits(),
+                s_group,
+                done_fence,
+                sound,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    #[cfg(windows)]
+    pub fn ma_sound_init_from_file_w(
+        engine: &Engine,
+        path: &[u16],
+        flags: SoundFlags,
+        s_group: Option<&SoundGroup>,
+        done_fence: Option<Fence>,
+        sound: *mut sys::ma_sound,
+    ) -> MaResult<()> {
+        let s_group: *mut sys::ma_sound_group =
+            s_group.map_or(core::ptr::null_mut(), |g| g.to_raw());
+        let done_fence = done_fence.map_or(core::ptr::null_mut(), |f| f.to_raw());
+
+        let res = unsafe {
+            sys::ma_sound_init_from_file_w(
+                engine.to_raw(),
+                path.as_ptr(),
+                flags.bits(),
+                s_group,
+                done_fence,
+                sound,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_sound_init_copy(
+        engine: &Engine,
+        existing_sound: &Sound,
+        flags: SoundFlags,
+        s_group: Option<&mut SoundGroup>,
+        new_sound: *mut sys::ma_sound,
+    ) -> MaResult<()> {
+        let s_group: *mut sys::ma_sound_group =
+            s_group.map_or(core::ptr::null_mut(), |g| g.to_raw());
+
+        let res = unsafe {
+            sys::ma_sound_init_copy(
+                engine.to_raw(),
+                existing_sound.to_raw() as *const _,
+                flags.bits(),
+                s_group,
+                new_sound,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_sound_init_from_data_source<D: AsSourcePtr + ?Sized>(
+        engine: &Engine,
+        data_source: &D,
+        flags: SoundFlags,
+        s_group: Option<&SoundGroup>,
+        sound: *mut sys::ma_sound,
+    ) -> MaResult<()> {
+        let s_group: *mut sys::ma_sound_group =
+            s_group.map_or(core::ptr::null_mut(), |g| g.to_raw());
+
+        let res = unsafe {
+            sys::ma_sound_init_from_data_source(
+                engine.to_raw(),
+                private_data_source::source_ptr(data_source),
+                flags.bits(),
+                s_group,
+                sound,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_sound_init_ex(
+        engine: &Engine,
+        config: &SoundBuilder,
+        sound: *mut sys::ma_sound,
+    ) -> MaResult<()> {
+        let res = unsafe { sys::ma_sound_init_ex(engine.to_raw(), config.as_raw_ptr(), sound) };
+        MaudioError::check(res)
+    }
+
+    // Do not use
+    #[allow(unused)]
+    #[inline]
+    pub fn ma_sound_get_engine(sound: &Sound) -> *mut sys::ma_engine {
+        unsafe { sys::ma_sound_get_engine(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_data_source<'a>(sound: &'a Sound) -> DataSourceRef<'a, f32> {
+        let ptr = unsafe { sys::ma_sound_get_data_source(sound.to_raw() as *const _) };
+        DataSourceRef::from_ptr(ptr)
+    }
+
+    #[inline]
+    pub fn ma_sound_start(sound: &Sound) -> MaResult<()> {
+        let res = unsafe { sys::ma_sound_start(sound.to_raw()) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_sound_stop(sound: &Sound) -> MaResult<()> {
+        let res = unsafe { sys::ma_sound_stop(sound.to_raw()) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_sound_stop_with_fade_in_pcm_frames(sound: &Sound, fade_frames: u64) -> MaResult<()> {
+        let res =
+            unsafe { sys::ma_sound_stop_with_fade_in_pcm_frames(sound.to_raw(), fade_frames) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_sound_stop_with_fade_in_milis(sound: &Sound, fade_milis: u64) -> MaResult<()> {
+        let res =
+            unsafe { sys::ma_sound_stop_with_fade_in_milliseconds(sound.to_raw(), fade_milis) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_sound_set_volume(sound: &Sound, volume: f32) {
+        unsafe { sys::ma_sound_set_volume(sound.to_raw(), volume) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_volume(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_volume(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_pan(sound: &Sound, pan: f32) {
+        unsafe { sys::ma_sound_set_pan(sound.to_raw(), pan) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_pan(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_pan(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_pan_mode(sound: &Sound, mode: PanMode) {
+        unsafe {
+            sys::ma_sound_set_pan_mode(sound.to_raw(), mode.into());
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_pan_mode(sound: &Sound) -> MaResult<PanMode> {
+        let res = unsafe { sys::ma_sound_get_pan_mode(sound.to_raw() as *const _) };
+        res.try_into()
+    }
+
+    #[inline]
+    pub fn ma_sound_set_pitch(sound: &Sound, pitch: f32) {
+        unsafe { sys::ma_sound_set_pitch(sound.to_raw(), pitch) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_pitch(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_pitch(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_spatialization_enabled(sound: &Sound, enabled: bool) {
+        let enabled = enabled as sys::ma_bool32;
+        unsafe { sys::ma_sound_set_spatialization_enabled(sound.to_raw(), enabled) }
+    }
+
+    #[inline]
+    pub fn ma_sound_is_spatialization_enabled(sound: &Sound) -> bool {
+        let res = unsafe { sys::ma_sound_is_spatialization_enabled(sound.to_raw() as *const _) };
+        res == 1
+    }
+
+    #[inline]
+    pub fn ma_sound_set_pinned_listener_index(sound: &Sound, listener_idx: u32) {
+        unsafe { sys::ma_sound_set_pinned_listener_index(sound.to_raw(), listener_idx) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_pinned_listener_index(sound: &Sound) -> u32 {
+        unsafe { sys::ma_sound_get_pinned_listener_index(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_listener_index(sound: &Sound) -> u32 {
+        unsafe { sys::ma_sound_get_listener_index(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_direction_to_listener(sound: &Sound) -> Vec3 {
+        let vec = unsafe { sys::ma_sound_get_direction_to_listener(sound.to_raw() as *const _) };
+        vec.into()
+    }
+
+    #[inline]
+    pub fn ma_sound_set_position(sound: &Sound, vec3: Vec3) {
+        unsafe {
+            sys::ma_sound_set_position(sound.to_raw(), vec3.x, vec3.y, vec3.z);
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_position(sound: &Sound) -> Vec3 {
+        let vec = unsafe { sys::ma_sound_get_position(sound.to_raw() as *const _) };
+        vec.into()
+    }
+
+    #[inline]
+    pub fn ma_sound_set_direction(sound: &Sound, vec3: Vec3) {
+        unsafe { sys::ma_sound_set_direction(sound.to_raw(), vec3.x, vec3.y, vec3.z) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_direction(sound: &Sound) -> Vec3 {
+        let vec = unsafe { sys::ma_sound_get_direction(sound.to_raw() as *const _) };
+        vec.into()
+    }
+
+    #[inline]
+    pub fn ma_sound_set_velocity(sound: &Sound, vec3: Vec3) {
+        unsafe { sys::ma_sound_set_velocity(sound.to_raw(), vec3.x, vec3.y, vec3.z) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_velocity(sound: &Sound) -> Vec3 {
+        let vec = unsafe { sys::ma_sound_get_velocity(sound.to_raw() as *const _) };
+        vec.into()
+    }
+
+    #[inline]
+    pub fn ma_sound_set_attenuation_model(sound: &Sound, model: AttenuationModel) {
+        unsafe { sys::ma_sound_set_attenuation_model(sound.to_raw(), model.into()) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_attenuation_model(sound: &Sound) -> MaResult<AttenuationModel> {
+        let model = unsafe { sys::ma_sound_get_attenuation_model(sound.to_raw() as *const _) };
+        model.try_into()
+    }
+
+    #[inline]
+    pub fn ma_sound_set_positioning(sound: &Sound, positioning: Positioning) {
+        unsafe { sys::ma_sound_set_positioning(sound.to_raw(), positioning.into()) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_positioning(sound: &Sound) -> MaResult<Positioning> {
+        let pos = unsafe { sys::ma_sound_get_positioning(sound.to_raw() as *const _) };
+        pos.try_into()
+    }
+
+    #[inline]
+    pub fn ma_sound_set_rolloff(sound: &Sound, rolloff: f32) {
+        unsafe { sys::ma_sound_set_rolloff(sound.to_raw(), rolloff) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_rolloff(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_rolloff(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_min_gain(sound: &Sound, min_gain: f32) {
+        unsafe { sys::ma_sound_set_min_gain(sound.to_raw(), min_gain) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_min_gain(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_min_gain(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_max_gain(sound: &Sound, max_gain: f32) {
+        unsafe { sys::ma_sound_set_max_gain(sound.to_raw(), max_gain) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_max_gain(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_max_gain(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_min_distance(sound: &Sound, min_distance: f32) {
+        unsafe { sys::ma_sound_set_min_distance(sound.to_raw(), min_distance) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_min_distance(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_min_distance(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_max_distance(sound: &Sound, max_distance: f32) {
+        unsafe { sys::ma_sound_set_max_distance(sound.to_raw(), max_distance) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_max_distance(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_max_distance(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_cone(sound: &Sound, cone: Cone) {
+        unsafe {
+            sys::ma_sound_set_cone(
+                sound.to_raw(),
+                cone.inner_angle_rad,
+                cone.outer_angle_rad,
+                cone.outer_gain,
+            );
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_cone(sound: &Sound) -> Cone {
+        let mut inner = 0.0f32;
+        let mut outer = 0.0f32;
+        let mut gain = 1.0f32;
+
+        unsafe {
+            sys::ma_sound_get_cone(
+                sound.to_raw() as *const _,
+                &mut inner,
+                &mut outer,
+                &mut gain,
+            );
+        }
+
+        Cone {
+            inner_angle_rad: inner,
+            outer_angle_rad: outer,
+            outer_gain: gain,
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_doppler_factor(sound: &Sound, doppler_factor: f32) {
+        unsafe { sys::ma_sound_set_doppler_factor(sound.to_raw(), doppler_factor) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_doppler_factor(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_doppler_factor(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_directional_attenuation_factor(sound: &Sound, dir_attenuation_factor: f32) {
+        unsafe {
+            sys::ma_sound_set_directional_attenuation_factor(
+                sound.to_raw(),
+                dir_attenuation_factor,
+            );
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_directional_attenuation_factor(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_directional_attenuation_factor(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_fade_in_pcm_frames(
+        sound: &Sound,
+        volume_start: f32,
+        volume_end: f32,
+        fade_length_frames: u64,
+    ) {
+        unsafe {
+            sys::ma_sound_set_fade_in_pcm_frames(
+                sound.to_raw(),
+                volume_start,
+                volume_end,
+                fade_length_frames,
+            )
+        };
+    }
+
+    #[inline]
+    pub fn ma_sound_set_fade_in_milliseconds(
+        sound: &Sound,
+        volume_start: f32,
+        volume_end: f32,
+        fade_length_mili: u64,
+    ) {
+        unsafe {
+            sys::ma_sound_set_fade_in_milliseconds(
+                sound.to_raw(),
+                volume_start,
+                volume_end,
+                fade_length_mili,
+            );
+        }
+    }
+
+    pub fn ma_sound_set_fade_start_in_pcm_frames(
+        sound: &Sound,
+        volume_start: f32,
+        volume_end: f32,
+        fade_length_pcm: u64,
+        time_in_frames: u64,
+    ) {
+        unsafe {
+            sys::ma_sound_set_fade_start_in_pcm_frames(
+                sound.to_raw(),
+                volume_start,
+                volume_end,
+                fade_length_pcm,
+                time_in_frames,
+            )
+        }
+    }
+
+    pub fn ma_sound_set_fade_start_in_milliseconds(
+        sound: &Sound,
+        volume_start: f32,
+        volume_end: f32,
+        fade_length_mili: u64,
+        time: u64,
+    ) {
+        unsafe {
+            sys::ma_sound_set_fade_start_in_milliseconds(
+                sound.to_raw(),
+                volume_start,
+                volume_end,
+                fade_length_mili,
+                time,
+            )
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_current_fade_volume(sound: &Sound) -> f32 {
+        unsafe { sys::ma_sound_get_current_fade_volume(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_start_time_in_pcm_frames(sound: &Sound, abs_time_frames: u64) {
+        unsafe {
+            sys::ma_sound_set_start_time_in_pcm_frames(sound.to_raw(), abs_time_frames);
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_start_time_in_milliseconds(sound: &Sound, abs_time_millis: u64) {
+        unsafe {
+            sys::ma_sound_set_start_time_in_milliseconds(sound.to_raw(), abs_time_millis);
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_stop_time_in_pcm_frames(sound: &Sound, abs_time_frames: u64) {
+        unsafe {
+            sys::ma_sound_set_stop_time_in_pcm_frames(sound.to_raw(), abs_time_frames);
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_stop_time_in_milliseconds(sound: &Sound, abs_time_mili: u64) {
+        unsafe {
+            sys::ma_sound_set_stop_time_in_milliseconds(sound.to_raw(), abs_time_mili);
+        }
+    }
+
+    pub fn ma_sound_set_stop_time_with_fade_in_pcm_frames(
+        sound: &Sound,
+        stop_time_frames: u64,
+        fade_length_frames: u64,
+    ) {
+        unsafe {
+            sys::ma_sound_set_stop_time_with_fade_in_pcm_frames(
+                sound.to_raw(),
+                stop_time_frames,
+                fade_length_frames,
+            );
+        }
+    }
+
+    pub fn ma_sound_set_stop_time_with_fade_in_milliseconds(
+        sound: &Sound,
+        stop_time_millis: u64,
+        fade_length_millis: u64,
+    ) {
+        unsafe {
+            sys::ma_sound_set_stop_time_with_fade_in_milliseconds(
+                sound.to_raw(),
+                stop_time_millis,
+                fade_length_millis,
+            );
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_is_playing(sound: &Sound) -> bool {
+        let res = unsafe { sys::ma_sound_is_playing(sound.to_raw() as *const _) };
+        res == 1
+    }
+
+    #[inline]
+    pub fn ma_sound_get_time_in_pcm_frames(sound: &Sound) -> u64 {
+        unsafe { sys::ma_sound_get_time_in_pcm_frames(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_get_time_in_milliseconds(sound: &Sound) -> u64 {
+        unsafe { sys::ma_sound_get_time_in_milliseconds(sound.to_raw() as *const _) }
+    }
+
+    #[inline]
+    pub fn ma_sound_set_looping(sound: &Sound, looping: bool) {
+        let looping = looping as u32;
+        unsafe {
+            sys::ma_sound_set_looping(sound.to_raw(), looping);
+        }
+    }
+
+    #[inline]
+    pub fn ma_sound_is_looping(sound: &Sound) -> bool {
+        let res = unsafe { sys::ma_sound_is_looping(sound.to_raw() as *const _) };
+        res == 1
+    }
+
+    #[inline]
+    pub fn ma_sound_at_end(sound: &Sound) -> bool {
+        let res = unsafe { sys::ma_sound_at_end(sound.to_raw() as *const _) };
+        res == 1
+    }
+
+    #[inline]
+    pub fn ma_sound_seek_to_pcm_frame(sound: &Sound, frame_index: u64) -> MaResult<()> {
+        let res = unsafe { sys::ma_sound_seek_to_pcm_frame(sound.to_raw(), frame_index) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_sound_seek_to_second(sound: &Sound, seek_point_seconds: f32) -> MaResult<()> {
+        let res = unsafe { sys::ma_sound_seek_to_second(sound.to_raw(), seek_point_seconds) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_sound_get_data_format(sound: &Sound) -> MaResult<DataFormat> {
+        let mut format_raw: sys::ma_format = sys::ma_format_ma_format_unknown;
+        let mut channels: sys::ma_uint32 = 0;
+        let mut sample_rate: sys::ma_uint32 = 0;
+
+        let mut channel_map_raw = vec![0 as sys::ma_channel; sys::MA_MAX_CHANNELS as usize];
+        let res = unsafe {
+            sys::ma_sound_get_data_format(
+                sound.to_raw(),
+                &mut format_raw,
+                &mut channels,
+                &mut sample_rate,
+                channel_map_raw.as_mut_ptr(),
+                channel_map_raw.len(),
+            )
+        };
+        MaudioError::check(res)?;
+
+        // Could maybe cast when passing the ptr to miniaudio, but copying should be fine here
+        let mut channel_map: Vec<Channel> = Vec::new();
+        for c in channel_map_raw {
+            channel_map.push(Channel::try_from(c)?);
+        }
+        channel_map.truncate(channels as usize);
+
+        Ok(DataFormat {
+            format: format_raw.try_into()?,
+            channels,
+            sample_rate: sample_rate.try_into()?,
+            channel_map,
+        })
+    }
+
+    #[inline]
+    pub fn ma_sound_get_cursor_in_pcm_frames(sound: &Sound) -> MaResult<u64> {
+        let mut cursor: sys::ma_uint64 = 0;
+        let res = unsafe {
+            sys::ma_sound_get_cursor_in_pcm_frames(sound.to_raw() as *const _, &mut cursor)
+        };
+        MaudioError::check(res)?;
+        Ok(cursor)
+    }
+
+    #[inline]
+    pub fn ma_sound_get_length_in_pcm_frames(sound: &Sound) -> MaResult<u64> {
+        let mut length: sys::ma_uint64 = 0;
+        let res = unsafe {
+            sys::ma_sound_get_length_in_pcm_frames(sound.to_raw() as *const _, &mut length)
+        };
+        MaudioError::check(res)?;
+        Ok(length)
+    }
+
+    #[inline]
+    pub fn ma_sound_get_cursor_in_seconds(sound: &Sound) -> MaResult<f32> {
+        let mut cursor: f32 = 0.0;
+        let res =
+            unsafe { sys::ma_sound_get_cursor_in_seconds(sound.to_raw() as *const _, &mut cursor) };
+        MaudioError::check(res)?;
+        Ok(cursor)
+    }
+
+    #[inline]
+    pub fn ma_sound_get_length_in_seconds(sound: &Sound) -> MaResult<f32> {
+        let mut length: f32 = 0.0;
+        let res =
+            unsafe { sys::ma_sound_get_length_in_seconds(sound.to_raw() as *const _, &mut length) };
+        MaudioError::check(res)?;
+        Ok(length)
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub fn ma_sound_set_end_callback(
+        sound: &mut Sound,
+        callback: sys::ma_sound_end_proc,
+        user_data: *mut core::ffi::c_void,
+    ) -> MaResult<()> {
+        let res = unsafe { sys::ma_sound_set_end_callback(sound.to_raw(), callback, user_data) };
+        MaudioError::check(res)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        audio::{
+            math::vec3::Vec3,
+            pan::PanMode,
+            spatial::{attenuation::AttenuationModel, cone::Cone, positioning::Positioning},
+        },
+        data_source::sources::buffer::AudioBufferBuilder,
+        engine::{node_graph::nodes::NodeOps, Engine},
+        sound::sound_builder::SoundBuilder,
+    };
+
+    fn assert_f32_eq(a: f32, b: f32) {
+        assert!(
+            (a - b).abs() <= 1.0e-6,
+            "expected {a} ~= {b}, diff={}",
+            (a - b).abs()
+        );
+    }
+
+    fn assert_vec3_eq(a: Vec3, b: Vec3) {
+        assert_f32_eq(a.x, b.x);
+        assert_f32_eq(a.y, b.y);
+        assert_f32_eq(a.z, b.z);
+    }
+
+    #[test]
+    fn sound_test_cast_to_node() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+        let node_ref = sound.as_node();
+        let state = node_ref.state();
+        assert!(state.is_ok());
+        let _state = state.unwrap();
+    }
+
+    #[test]
+    fn test_sound_drop_group_before_sound() {
+        let engine = Engine::new_for_tests().unwrap();
+        let group = engine.new_sound_group().unwrap();
+
+        let sound = SoundBuilder::new(&engine)
+            .sound_group(&group)
+            .build()
+            .unwrap();
+        drop(group);
+        let _vol = sound.volume();
+        drop(sound);
+    }
+
+    #[test]
+    fn test_sound_drop_sound_before_sound() {
+        let engine = Engine::new_for_tests().unwrap();
+        let group = engine.new_sound_group().unwrap();
+
+        let sound = SoundBuilder::new(&engine)
+            .sound_group(&group)
+            .build()
+            .unwrap();
+        drop(sound);
+        let _vol = group.volume();
+        drop(group);
+    }
+
+    #[test]
+    fn test_sound_play_stop_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.play_sound().unwrap();
+        let _ = sound.is_playing();
+
+        sound.stop_sound().unwrap();
+        let _ = sound.is_playing();
+    }
+
+    #[test]
+    fn test_sound_stop_with_fade_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.play_sound().unwrap();
+
+        sound.stop_with_fade_frames(128).unwrap();
+        sound.stop_with_fade_millis(10).unwrap();
+    }
+
+    #[test]
+    fn test_sound_volume_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_volume(0.25);
+        assert_f32_eq(sound.volume(), 0.25);
+
+        sound.set_volume(1.0);
+        assert_f32_eq(sound.volume(), 1.0);
+    }
+
+    #[test]
+    fn test_sound_pan_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_pan(-0.5);
+        assert_f32_eq(sound.pan(), -0.5);
+
+        sound.set_pan(0.5);
+        assert_f32_eq(sound.pan(), 0.5);
+    }
+
+    #[test]
+    fn test_sound_pan_mode_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_pan_mode(PanMode::Pan);
+        assert_eq!(sound.pan_mode().unwrap(), PanMode::Pan);
+
+        sound.set_pan_mode(PanMode::Balance);
+        assert_eq!(sound.pan_mode().unwrap(), PanMode::Balance);
+    }
+
+    #[test]
+    fn test_sound_pitch_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_pitch(0.75);
+        assert_f32_eq(sound.pitch(), 0.75);
+
+        sound.set_pitch(1.25);
+        assert_f32_eq(sound.pitch(), 1.25);
+    }
+
+    #[test]
+    fn test_sound_spatialization_toggle() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_spatialization(false);
+        assert!(!sound.spatialization());
+
+        sound.set_spatialization(true);
+        assert!(sound.spatialization());
+    }
+
+    #[test]
+    fn test_sound_pinned_listener_set_get() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        // If the engine only has 1 listener, 0 is the only valid value.
+        let n = engine.listener_count();
+        if n < 2 {
+            sound.set_pinned_listener(0);
+            assert_eq!(sound.pinned_listener(), 0);
+            return;
+        }
+
+        sound.set_pinned_listener(0);
+        assert_eq!(sound.pinned_listener(), 0);
+
+        sound.set_pinned_listener(1);
+        assert_eq!(sound.pinned_listener(), 1);
+    }
+
+    #[test]
+    fn test_sound_listener_index_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        let idx = sound.listener();
+        assert!(idx < engine.listener_count());
+    }
+
+    #[test]
+    fn test_sound_direction_to_listener_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        // Give it a non-zero position so direction is better defined.
+        sound.set_position(Vec3 {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        });
+        let _dir = sound.direction_to_listener();
+        // Should not assert exact values because listener positions can vary by backend/config.
+    }
+
+    #[test]
+    fn test_sound_position_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        let p = Vec3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        };
+        sound.set_position(p);
+        assert_vec3_eq(sound.position(), p);
+    }
+
+    #[test]
+    fn test_sound_direction_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        let d = Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: -1.0,
+        };
+        sound.set_direction(d);
+        assert_vec3_eq(sound.direction(), d);
+    }
+
+    #[test]
+    fn test_sound_velocity_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        let v = Vec3 {
+            x: -1.0,
+            y: 0.5,
+            z: 10.0,
+        };
+        sound.set_velocity(v);
+        assert_vec3_eq(sound.velocity(), v);
+    }
+
+    #[test]
+    fn test_sound_attenuation_model_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_attenuation(AttenuationModel::Inverse);
+        assert_eq!(sound.attenuation().unwrap(), AttenuationModel::Inverse);
+
+        sound.set_attenuation(AttenuationModel::Linear);
+        assert_eq!(sound.attenuation().unwrap(), AttenuationModel::Linear);
+    }
+
+    #[test]
+    fn test_sound_positioning_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_positioning(Positioning::Absolute);
+        assert_eq!(sound.positioning().unwrap(), Positioning::Absolute);
+
+        sound.set_positioning(Positioning::Relative);
+        assert_eq!(sound.positioning().unwrap(), Positioning::Relative);
+    }
+
+    #[test]
+    fn test_sound_rolloff_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_rolloff(0.5);
+        assert_f32_eq(sound.rolloff(), 0.5);
+
+        sound.set_rolloff(2.0);
+        assert_f32_eq(sound.rolloff(), 2.0);
+    }
+
+    #[test]
+    fn test_sound_min_max_gain_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_min_gain(0.1);
+        assert_f32_eq(sound.min_gain(), 0.1);
+
+        sound.set_max_gain(0.9);
+        assert_f32_eq(sound.max_gain(), 0.9);
+    }
+
+    #[test]
+    fn test_sound_min_max_distance_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_min_distance(1.0);
+        assert_f32_eq(sound.min_distance(), 1.0);
+
+        sound.set_max_distance(100.0);
+        assert_f32_eq(sound.max_distance(), 100.0);
+    }
+
+    #[test]
+    fn test_sound_cone_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        let cone = Cone {
+            inner_angle_rad: 0.5,
+            outer_angle_rad: 1.0,
+            outer_gain: 0.25,
+        };
+
+        sound.set_cone(cone);
+        let got = sound.cone();
+
+        assert_f32_eq(got.inner_angle_rad, cone.inner_angle_rad);
+        assert_f32_eq(got.outer_angle_rad, cone.outer_angle_rad);
+        assert_f32_eq(got.outer_gain, cone.outer_gain);
+    }
+
+    #[test]
+    fn test_sound_doppler_factor_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_doppler_factor(0.25);
+        assert_f32_eq(sound.doppler_factor(), 0.25);
+
+        sound.set_doppler_factor(2.0);
+        assert_f32_eq(sound.doppler_factor(), 2.0);
+    }
+
+    #[test]
+    fn test_sound_directional_attenuation_roundtrip() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_directional_attenuation(0.2);
+        assert_f32_eq(sound.directional_attenuation(), 0.2);
+
+        sound.set_directional_attenuation(1.0);
+        assert_f32_eq(sound.directional_attenuation(), 1.0);
+    }
+
+    #[test]
+    fn test_sound_fade_apis_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_fade_pcm(1.0, 0.0, 128);
+        sound.set_fade_mili(1.0, 0.0, 10);
+
+        sound.set_fade_start_pcm(1.0, 0.0, 128, 0);
+        sound.set_fade_start_millis(1.0, 0.0, 10, 0);
+
+        let _ = sound.current_fade_volume();
+    }
+
+    #[test]
+    fn test_sound_start_stop_times_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        sound.set_start_time_pcm(0);
+        sound.set_start_time_millis(0);
+
+        sound.set_stop_time_pcm(0);
+        sound.set_stop_time_millis(0);
+
+        sound.set_stop_time_with_fade_pcm(0, 128);
+        sound.set_stop_time_with_fade_millis(0, 10);
+    }
+
+    fn ramp_f32_interleaved(channels: u32, frames: u64) -> Vec<f32> {
+        let mut data = vec![0.0f32; (channels as usize) * (frames as usize)];
+        for f in 0..frames as usize {
+            for c in 0..channels as usize {
+                // unique value per (frame, channel)
+                data[f * channels as usize + c] = (f as f32) * 10.0 + (c as f32);
+            }
+        }
+        data
+    }
+
+    #[test]
+    fn test_sound_builder_data_source() {
+        let engine = Engine::new_for_tests().unwrap();
+        let data = ramp_f32_interleaved(2, 32);
+
+        let buf = AudioBufferBuilder::build_f32(2, &data).unwrap();
+
+        let src = buf.as_source_ref();
+
+        let sound = SoundBuilder::new(&engine)
+            .data_source(&src)
+            .build()
+            .unwrap();
+
+        sound.set_looping(false);
+        assert!(!sound.looping());
+
+        sound.set_looping(true);
+        assert!(sound.looping());
+    }
+
+    #[test]
+    fn test_sound_data_source() {
+        let engine = Engine::new_for_tests().unwrap();
+        let data = ramp_f32_interleaved(2, 32);
+
+        let buf = AudioBufferBuilder::build_f32(2, &data).unwrap();
+
+        let src = buf.as_source_ref();
+
+        let sound = engine.new_sound_from_source(&src).unwrap();
+
+        sound.set_looping(false);
+        assert!(!sound.looping());
+
+        sound.set_looping(true);
+        assert!(sound.looping());
+    }
+
+    #[test]
+    fn test_sound_time_queries_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        let _t0 = sound.time_pcm();
+        let _t1 = sound.time_millis();
+    }
+
+    #[test]
+    fn test_sound_ended_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        let _ = sound.ended();
+    }
+
+    #[test]
+    fn test_sound_seek_apis_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        let _ = sound.seek_to_frame(0);
+        let _ = sound.seek_to_second(0.0);
+    }
+
+    #[test]
+    fn test_sound_data_format_and_ranges_smoke() {
+        let engine = Engine::new_for_tests().unwrap();
+        let sound = engine.new_sound().unwrap();
+
+        // These may fail depending on how your test sound is created.
+        // Still valuable: if they succeed, basic sanity checks; if not, no panic.
+        if let Ok(df) = sound.data_format() {
+            // Optional: assert df.channels > 0 etc, depending on your DataFormat type.
+            let _ = df;
+        }
+
+        let _ = sound.cursor_pcm();
+        let _ = sound.length_pcm();
+        let _ = sound.cursor_seconds();
+        let _ = sound.length_seconds();
+    }
+}

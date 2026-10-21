@@ -1,0 +1,1032 @@
+//! Interface for reading from a data source
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
+
+use maudio_sys::ffi as sys;
+
+use crate::{
+    audio::{
+        channels::Channel,
+        formats::{Format, SampleBuffer},
+        sample_rate::SampleRate,
+    },
+    data_source::pcm_source::PcmSource,
+    pcm_frames::PcmFormat,
+    AsRawRef, Binding, MaResult, MaudioError,
+};
+
+#[cfg(feature = "engine")]
+use crate::engine::resource::{
+    rm_buffer::ResourceManagerBuffer, rm_source::ResourceManagerSource,
+    rm_stream::ResourceManagerStream,
+};
+
+pub mod data_source_builder;
+pub mod data_source_chain;
+pub(crate) mod data_source_vtable;
+pub mod pcm_source;
+pub mod sources;
+
+/// Describes an audio stream’s PCM format and layout.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataFormat {
+    /// Sample format (e.g. `S16`, `F32`).
+    pub format: Format,
+    /// Number of interleaved channels.
+    pub channels: u32,
+    /// Sample rate in Hz.
+    pub sample_rate: SampleRate,
+    /// Channel order/map for each channel, length == channels (when available).
+    pub channel_map: Vec<Channel>,
+}
+
+/// State associated with a custom [`PcmSource`].
+///
+/// A `SourceContext` is created and retained by the resulting [`DataSource`], then
+/// passed to the [`PcmSource`] implementation during data-source operations.
+///
+/// The implementation may inspect the data format and looping state. It is
+/// responsible for keeping the cursor consistent with the position of the
+/// underlying source.
+#[derive(Debug, Clone)]
+pub struct SourceContext {
+    pub data_format: DataFormat,
+    /// The current position in PCM frames.
+    ///
+    /// The implementation must advance this value when frames are consumed by
+    /// [`PcmSource::fill_pcm_frames`] and update it after a successful
+    /// [`PcmSource::seek_to_pcm_frame`].
+    ///
+    /// This value is measured in complete PCM frames, not individual interleaved
+    /// samples. For example, advancing by 10 stereo frames advances the cursor by
+    /// 10, even though 20 samples were consumed.
+    pub cursor: u64,
+    /// Whether looping is currently enabled for the data source.
+    ///
+    /// This mirrors miniaudio's internal looping flag. It does not indicate
+    /// whether the source supports looping, and implementations should not
+    /// normally perform looping themselves.
+    ///
+    /// Miniaudio-managed looping requires the source to support seeking. This
+    /// value is primarily useful to implementations that need to observe or
+    /// mirror the looping state.
+    pub looping: bool,
+}
+
+pub struct DataSource<F: PcmFormat, P: PcmSource<F>> {
+    inner: *mut DataSourceInner<F, P>,
+}
+
+unsafe impl<F: PcmFormat, P: PcmSource<F>> Send for DataSource<F, P> where P: Send {}
+
+#[repr(C)]
+struct DataSourceInner<F: PcmFormat, P: PcmSource<F>> {
+    inner: sys::ma_data_source_base,
+    context: SourceContext,
+    source: P,
+    vtable: *const sys::ma_data_source_vtable,
+    _format: PhantomData<F>,
+}
+
+impl<F: PcmFormat, P: PcmSource<F>> DataSource<F, P> {
+    pub fn read_pcm_frames_into(&mut self, dst: &mut [F::PcmUnit]) -> MaResult<usize> {
+        let channels = self.data_format()?.channels;
+        if channels == 0 {
+            return Err(MaudioError::from_ma_result(sys::ma_result_MA_INVALID_ARGS));
+        }
+        data_source_ffi::ma_data_source_read_pcm_frames_into::<F, Self>(self, channels, dst)
+    }
+
+    pub fn read_pcm_frames(&mut self, frame_count: u64) -> MaResult<SampleBuffer<F>> {
+        // Is there a better way to get the channels?
+        let channels = self.data_format()?.channels;
+        if channels == 0 {
+            return Err(MaudioError::from_ma_result(sys::ma_result_MA_INVALID_ARGS));
+        }
+        data_source_ffi::ma_data_source_read_pcm_frames::<F, Self>(self, frame_count, channels)
+    }
+
+    pub fn seek_pcm_frames(&mut self, frame_count: u64) -> MaResult<u64> {
+        data_source_ffi::ma_data_source_seek_pcm_frames(self, frame_count)
+    }
+
+    pub fn seek_to_pcm_frame(&mut self, frame_index: u64) -> MaResult<()> {
+        data_source_ffi::ma_data_source_seek_to_pcm_frame(self, frame_index)
+    }
+
+    pub fn seek_seconds(&mut self, seconds: f32) -> MaResult<f32> {
+        data_source_ffi::ma_data_source_seek_seconds(self, seconds)
+    }
+
+    pub fn seek_to_second(&mut self, seek_point: f32) -> MaResult<()> {
+        data_source_ffi::ma_data_source_seek_to_second(self, seek_point)
+    }
+
+    pub fn set_looping(&self, is_looping: bool) -> MaResult<()> {
+        data_source_ffi::ma_data_source_set_looping(self, is_looping)
+    }
+
+    pub fn data_format(&self) -> MaResult<DataFormat> {
+        data_source_ffi::ma_data_source_get_data_format(self)
+    }
+
+    pub fn cursor_in_pcm_frames(&self) -> MaResult<u64> {
+        data_source_ffi::ma_data_source_get_cursor_in_pcm_frames(self)
+    }
+
+    pub fn length_in_pcm_frames(&self) -> MaResult<u64> {
+        data_source_ffi::ma_data_source_get_length_in_pcm_frames(self)
+    }
+
+    pub fn cursor_in_seconds(&self) -> MaResult<f32> {
+        data_source_ffi::ma_data_source_get_cursor_in_seconds(self)
+    }
+
+    pub fn length_in_seconds(&self) -> MaResult<f32> {
+        data_source_ffi::ma_data_source_get_length_in_seconds(self)
+    }
+
+    pub fn looping(&self) -> bool {
+        data_source_ffi::ma_data_source_is_looping(self)
+    }
+
+    pub fn range_in_pcm_frames(&self) -> core::ops::Range<u64> {
+        data_source_ffi::ma_data_source_get_range_in_pcm_frames(self)
+    }
+
+    pub fn set_loop_point_in_pcm_frames(&mut self, begin: u64, end: u64) -> MaResult<()> {
+        data_source_ffi::ma_data_source_set_loop_point_in_pcm_frames(self, begin, end)
+    }
+
+    pub fn loop_point_in_pcm_frames(&self) -> core::ops::Range<u64> {
+        data_source_ffi::ma_data_source_get_loop_point_in_pcm_frames(self)
+    }
+
+    pub fn as_source_ref<'a>(&'a self) -> DataSourceRef<'a, F> {
+        let ptr =
+            (self.as_raw_ptr() as *mut sys::ma_data_source_base).cast::<sys::ma_data_source>();
+        DataSourceRef::from_ptr(ptr)
+    }
+}
+
+impl<F: PcmFormat, P: PcmSource<F>> AsRawRef for DataSource<F, P> {
+    type Raw = sys::ma_data_source_base;
+
+    fn as_raw(&self) -> &Self::Raw {
+        unsafe { &(*self.inner).inner }
+    }
+}
+
+impl<F: PcmFormat, P: PcmSource<F>> Deref for DataSource<F, P> {
+    type Target = P;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &(*self.inner).source }
+    }
+}
+
+impl<F: PcmFormat, P: PcmSource<F>> DerefMut for DataSource<F, P> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut (*self.inner).source }
+    }
+}
+
+pub type GetNextCallback = sys::ma_data_source_get_next_proc;
+
+// Keeps the methods on AsSourcePtr private
+pub(crate) mod private_data_source {
+    use crate::{
+        data_source::{
+            data_source_chain::ChainSource,
+            sources::{
+                buffer::{AudioBuffer, AudioBufferBase},
+                decoder::{custom_decoder::CustomDecoder, Decoder, DecoderOps},
+                noise::Noise,
+                pcm_ring_buffer::PcmRbRecv,
+                pulsewave::{PulseWave, PulseWaveOps},
+                waveform::{WaveForm, WaveFormOps},
+            },
+        },
+        pcm_frames::PcmFormat,
+    };
+
+    #[cfg(feature = "engine")]
+    use crate::engine::{
+        node_graph::nodes::source::source_node::AttachedSourceNode,
+        resource::{rm_source::ResourceManagerSource, rm_stream::ResourceManagerStream},
+    };
+
+    use super::*;
+    use maudio_sys::ffi as sys;
+
+    pub trait DataSourcePtrProvider<T: ?Sized> {
+        fn as_source_ptr(t: &T) -> *mut sys::ma_data_source;
+    }
+
+    pub struct DataSourceProvider;
+    pub struct DataSourceRefProvider;
+    pub struct AudioBufferProvider;
+    pub struct AudioBufferBaseProvider;
+    pub struct PcmRbRecvProvider;
+    pub struct DecoderProvider;
+    pub struct CustomDecoderProvider;
+    pub struct PulseWaveProvider;
+    pub struct WaveFormProvider;
+    pub struct NoiseProvider;
+    #[cfg(feature = "engine")]
+    pub struct AttachedSourceNodeProvider;
+    #[cfg(feature = "engine")]
+    pub struct ResourceManagerSourceProvider;
+    #[cfg(feature = "engine")]
+    pub struct ResourceManagerBufferProvider;
+    #[cfg(feature = "engine")]
+    pub struct ResourceManagerStreamProvider;
+    pub struct ChainSourceProvider;
+
+    impl<F: PcmFormat, P: PcmSource<F>> DataSourcePtrProvider<DataSource<F, P>> for DataSourceProvider {
+        #[inline]
+        fn as_source_ptr(t: &DataSource<F, P>) -> *mut sys::ma_data_source {
+            t.as_raw_ptr() as *mut _
+        }
+    }
+
+    impl<F: PcmFormat> DataSourcePtrProvider<DataSourceRef<'_, F>> for DataSourceRefProvider {
+        #[inline]
+        fn as_source_ptr(t: &DataSourceRef<'_, F>) -> *mut sys::ma_data_source {
+            t.to_raw()
+        }
+    }
+
+    impl<F: PcmFormat> DataSourcePtrProvider<AudioBuffer<F>> for AudioBufferProvider {
+        #[inline]
+        fn as_source_ptr(t: &AudioBuffer<F>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    impl<F: PcmFormat> DataSourcePtrProvider<AudioBufferBase<F>> for AudioBufferBaseProvider {
+        #[inline]
+        fn as_source_ptr(t: &AudioBufferBase<F>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    impl<F: PcmFormat> DataSourcePtrProvider<PcmRbRecv<F>> for PcmRbRecvProvider {
+        #[inline]
+        fn as_source_ptr(t: &PcmRbRecv<F>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    impl<F: PcmFormat, S> DataSourcePtrProvider<Decoder<F, S>> for DecoderProvider {
+        #[inline]
+        fn as_source_ptr(t: &Decoder<F, S>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    impl<F: PcmFormat, S> DataSourcePtrProvider<CustomDecoder<F, S>> for CustomDecoderProvider {
+        #[inline]
+        fn as_source_ptr(t: &CustomDecoder<F, S>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    impl<F: PcmFormat> DataSourcePtrProvider<PulseWave<F>> for PulseWaveProvider {
+        #[inline]
+        fn as_source_ptr(t: &PulseWave<F>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    impl<F: PcmFormat> DataSourcePtrProvider<WaveForm<F>> for WaveFormProvider {
+        #[inline]
+        fn as_source_ptr(t: &WaveForm<F>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    impl<F: PcmFormat> DataSourcePtrProvider<Noise<F>> for NoiseProvider {
+        #[inline]
+        fn as_source_ptr(t: &Noise<F>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    #[cfg(feature = "engine")]
+    impl<S: AsSourcePtr> DataSourcePtrProvider<AttachedSourceNode<S>> for AttachedSourceNodeProvider {
+        #[inline]
+        fn as_source_ptr(t: &AttachedSourceNode<S>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    #[cfg(feature = "engine")]
+    impl<F: PcmFormat, I> DataSourcePtrProvider<ResourceManagerSource<F, I>>
+        for ResourceManagerSourceProvider
+    {
+        #[inline]
+        fn as_source_ptr(t: &ResourceManagerSource<F, I>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    #[cfg(feature = "engine")]
+    impl<F: PcmFormat, I> DataSourcePtrProvider<ResourceManagerBuffer<F, I>>
+        for ResourceManagerBufferProvider
+    {
+        #[inline]
+        fn as_source_ptr(t: &ResourceManagerBuffer<F, I>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    #[cfg(feature = "engine")]
+    impl<F: PcmFormat, I> DataSourcePtrProvider<ResourceManagerStream<F, I>>
+        for ResourceManagerStreamProvider
+    {
+        #[inline]
+        fn as_source_ptr(t: &ResourceManagerStream<F, I>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    impl<F: PcmFormat> DataSourcePtrProvider<ChainSource<'_, F>> for ChainSourceProvider {
+        #[inline]
+        fn as_source_ptr(t: &ChainSource<'_, F>) -> *mut sys::ma_data_source {
+            t.as_source_ref().to_raw()
+        }
+    }
+
+    pub fn source_ptr<T: AsSourcePtr + ?Sized>(t: &T) -> *mut sys::ma_data_source {
+        <T as AsSourcePtr>::__PtrProvider::as_source_ptr(t)
+    }
+}
+
+#[doc(hidden)]
+pub trait AsSourcePtr {
+    type Format: PcmFormat;
+    type __PtrProvider: private_data_source::DataSourcePtrProvider<Self>;
+}
+
+#[doc(hidden)]
+impl<F: PcmFormat, P: PcmSource<F>> AsSourcePtr for DataSource<F, P> {
+    type Format = F;
+    type __PtrProvider = private_data_source::DataSourceProvider;
+}
+
+#[doc(hidden)]
+impl<'a, F: PcmFormat> AsSourcePtr for DataSourceRef<'a, F> {
+    type Format = F;
+    type __PtrProvider = private_data_source::DataSourceRefProvider;
+}
+
+mod sealed {
+    #[cfg(feature = "engine")]
+    use crate::{
+        engine::resource::{
+            rm_buffer::ResourceManagerBuffer, rm_source::ResourceManagerSource,
+            rm_stream::ResourceManagerStream,
+        },
+        pcm_frames::PcmFormat,
+    };
+
+    pub trait Sealed {}
+    #[cfg(feature = "engine")]
+    impl<F: PcmFormat, I> Sealed for ResourceManagerBuffer<F, I> {}
+    #[cfg(feature = "engine")]
+    impl<F: PcmFormat, I> Sealed for ResourceManagerSource<F, I> {}
+    #[cfg(feature = "engine")]
+    impl<F: PcmFormat, I> Sealed for ResourceManagerStream<F, I> {}
+}
+/// Carries for [`PcmFormat`] for data sources implementing [`DataSourceOps`]
+pub trait SharedSource: sealed::Sealed {}
+
+// The types that DataSourceOps is implemented for are listed here.
+#[cfg(feature = "engine")]
+impl<F: PcmFormat, I> DataSourceOps for ResourceManagerSource<F, I> {}
+#[cfg(feature = "engine")]
+impl<F: PcmFormat, I> DataSourceOps for ResourceManagerBuffer<F, I> {}
+#[cfg(feature = "engine")]
+impl<F: PcmFormat, I> DataSourceOps for ResourceManagerStream<F, I> {}
+
+pub trait DataSourceOps: AsSourcePtr + SharedSource {
+    fn read_pcm_frames_into(
+        &mut self,
+        dst: &mut [<Self::Format as PcmFormat>::PcmUnit],
+    ) -> MaResult<usize> {
+        let channels = self.data_format()?.channels;
+        if channels == 0 {
+            return Err(MaudioError::from_ma_result(sys::ma_result_MA_INVALID_ARGS));
+        }
+        data_source_ffi::ma_data_source_read_pcm_frames_into::<Self::Format, Self>(
+            self, channels, dst,
+        )
+    }
+
+    fn read_pcm_frames(&mut self, frame_count: u64) -> MaResult<SampleBuffer<Self::Format>> {
+        // Is there a better way to get the channels?
+        let channels = self.data_format()?.channels;
+        if channels == 0 {
+            return Err(MaudioError::from_ma_result(sys::ma_result_MA_INVALID_ARGS));
+        }
+        data_source_ffi::ma_data_source_read_pcm_frames::<Self::Format, Self>(
+            self,
+            frame_count,
+            channels,
+        )
+    }
+
+    /// Can only seek forwards. Returns the number of frames seeked.
+    fn seek_pcm_frames(&mut self, frame_count: u64) -> MaResult<u64> {
+        data_source_ffi::ma_data_source_seek_pcm_frames(self, frame_count)
+    }
+
+    fn seek_to_pcm_frame(&mut self, frame_index: u64) -> MaResult<()> {
+        data_source_ffi::ma_data_source_seek_to_pcm_frame(self, frame_index)
+    }
+
+    /// Can only seek forwards. Returns the number of seconds seeked.
+    fn seek_seconds(&mut self, seconds: f32) -> MaResult<f32> {
+        data_source_ffi::ma_data_source_seek_seconds(self, seconds)
+    }
+
+    fn seek_to_second(&mut self, seek_point: f32) -> MaResult<()> {
+        data_source_ffi::ma_data_source_seek_to_second(self, seek_point)
+    }
+
+    fn data_format(&self) -> MaResult<DataFormat> {
+        data_source_ffi::ma_data_source_get_data_format(self)
+    }
+
+    fn cursor_in_pcm_frames(&self) -> MaResult<u64> {
+        data_source_ffi::ma_data_source_get_cursor_in_pcm_frames(self)
+    }
+
+    fn length_in_pcm_frames(&self) -> MaResult<u64> {
+        data_source_ffi::ma_data_source_get_length_in_pcm_frames(self)
+    }
+
+    fn cursor_in_seconds(&self) -> MaResult<f32> {
+        data_source_ffi::ma_data_source_get_cursor_in_seconds(self)
+    }
+
+    fn length_in_seconds(&self) -> MaResult<f32> {
+        data_source_ffi::ma_data_source_get_length_in_seconds(self)
+    }
+
+    fn set_looping(&mut self, is_looping: bool) -> MaResult<()> {
+        data_source_ffi::ma_data_source_set_looping(self, is_looping)
+    }
+
+    fn looping(&self) -> bool {
+        data_source_ffi::ma_data_source_is_looping(self)
+    }
+
+    fn range_in_pcm_frames(&self) -> core::ops::Range<u64> {
+        data_source_ffi::ma_data_source_get_range_in_pcm_frames(self)
+    }
+
+    fn set_loop_point_in_pcm_frames(&mut self, begin: u64, end: u64) -> MaResult<()> {
+        data_source_ffi::ma_data_source_set_loop_point_in_pcm_frames(self, begin, end)
+    }
+
+    fn loop_point_in_pcm_frames(&self) -> core::ops::Range<u64> {
+        data_source_ffi::ma_data_source_get_loop_point_in_pcm_frames(self)
+    }
+}
+
+pub(crate) mod data_source_ffi {
+    use core::f32;
+    use std::marker::PhantomData;
+
+    use maudio_sys::ffi as sys;
+
+    use crate::{
+        audio::{channels::Channel, formats::SampleBuffer},
+        data_source::{
+            data_source_builder::DataSourceBuilder, private_data_source, AsSourcePtr, DataFormat,
+            DataSourceRef, GetNextCallback,
+        },
+        pcm_frames::{PcmFormat, PcmFormatInternal},
+        AsRawRef, Binding, MaResult, MaudioError,
+    };
+
+    #[inline]
+    pub fn ma_data_source_init(
+        config: &DataSourceBuilder,
+        source: *mut sys::ma_data_source,
+    ) -> MaResult<()> {
+        let res = unsafe { sys::ma_data_source_init(config.as_raw_ptr(), source) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_data_source_uninit(source: *mut sys::ma_data_source_base) {
+        unsafe {
+            sys::ma_data_source_uninit(source as *mut _);
+        }
+    }
+
+    pub fn ma_data_source_read_pcm_frames_into<F: PcmFormat, S: AsSourcePtr + ?Sized>(
+        source: &mut S,
+        channels: u32,
+        dst: &mut [F::PcmUnit],
+    ) -> MaResult<usize> {
+        let frame_count = (dst.len() / channels as usize / F::VEC_PCM_UNITS_PER_FRAME) as u64;
+
+        match F::DIRECT_READ {
+            true => {
+                // Read directly into destination
+                let frames_read = ma_data_source_read_pcm_frames_internal(
+                    source,
+                    frame_count,
+                    dst.as_mut_ptr() as *mut core::ffi::c_void,
+                )?;
+                Ok(frames_read as usize)
+            }
+            false => {
+                let tmp_len = SampleBuffer::<F>::required_len(
+                    frame_count as usize,
+                    channels,
+                    F::VEC_STORE_UNITS_PER_FRAME,
+                )?;
+
+                let mut tmp = vec![F::StorageUnit::default(); tmp_len];
+                let frames_read = ma_data_source_read_pcm_frames_internal(
+                    source,
+                    frame_count,
+                    tmp.as_mut_ptr() as *mut core::ffi::c_void,
+                )?;
+
+                let _ = <F as PcmFormatInternal>::read_from_storage_internal(
+                    &tmp,
+                    dst,
+                    frames_read as usize,
+                    channels as usize,
+                )?;
+
+                Ok(frames_read as usize)
+            }
+        }
+    }
+
+    pub fn ma_data_source_read_pcm_frames<F: PcmFormat, S: AsSourcePtr + ?Sized>(
+        source: &mut S,
+        frame_count: u64,
+        channels: u32,
+    ) -> MaResult<SampleBuffer<F>> {
+        let mut buffer = SampleBuffer::<F>::new_zeroed(frame_count as usize, channels)?;
+
+        let frames_read = ma_data_source_read_pcm_frames_internal(
+            source,
+            frame_count,
+            buffer.as_mut_ptr() as *mut core::ffi::c_void,
+        )?;
+
+        SampleBuffer::<F>::from_storage(buffer, frames_read as usize, channels)
+    }
+
+    #[inline]
+    pub fn ma_data_source_read_pcm_frames_internal<S: AsSourcePtr + ?Sized>(
+        source: &mut S,
+        frame_count: u64,
+        buffer: *mut core::ffi::c_void,
+    ) -> MaResult<u64> {
+        let mut frames_read = 0;
+        let res = unsafe {
+            sys::ma_data_source_read_pcm_frames(
+                private_data_source::source_ptr(source),
+                buffer,
+                frame_count,
+                &mut frames_read,
+            )
+        };
+        MaudioError::check(res)?;
+        Ok(frames_read)
+    }
+
+    #[inline]
+    pub fn ma_data_source_seek_pcm_frames<S: AsSourcePtr + ?Sized>(
+        source: &mut S,
+        frame_count: u64,
+    ) -> MaResult<u64> {
+        let mut frames_seeked = 0;
+        let res = unsafe {
+            sys::ma_data_source_seek_pcm_frames(
+                private_data_source::source_ptr(source),
+                frame_count,
+                &mut frames_seeked,
+            )
+        };
+        MaudioError::check(res)?;
+        Ok(frames_seeked)
+    }
+
+    #[inline]
+    pub fn ma_data_source_seek_to_pcm_frame<S: AsSourcePtr + ?Sized>(
+        source: &mut S,
+        frame_index: u64,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_data_source_seek_to_pcm_frame(
+                private_data_source::source_ptr(source),
+                frame_index,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_data_source_seek_seconds<S: AsSourcePtr + ?Sized>(
+        source: &mut S,
+        seconds: f32,
+    ) -> MaResult<f32> {
+        let mut seconds_seeked = 0.0f32;
+        let res = unsafe {
+            sys::ma_data_source_seek_seconds(
+                private_data_source::source_ptr(source),
+                seconds,
+                &mut seconds_seeked,
+            )
+        };
+        MaudioError::check(res)?;
+        Ok(seconds_seeked)
+    }
+
+    #[inline]
+    pub fn ma_data_source_seek_to_second<S: AsSourcePtr + ?Sized>(
+        source: &mut S,
+        seek_point: f32,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_data_source_seek_to_second(private_data_source::source_ptr(source), seek_point)
+        };
+        MaudioError::check(res)
+    }
+
+    pub fn ma_data_source_get_data_format<S: AsSourcePtr + ?Sized>(
+        source: &S,
+    ) -> MaResult<DataFormat> {
+        let mut format_raw: sys::ma_format = sys::ma_format_ma_format_unknown;
+        let mut channels: u32 = 0;
+        let mut sample_rate: u32 = 0;
+        let mut channel_map_raw = vec![0 as sys::ma_channel; sys::MA_MAX_CHANNELS as usize];
+        let res = unsafe {
+            sys::ma_data_source_get_data_format(
+                private_data_source::source_ptr(source),
+                &mut format_raw,
+                &mut channels,
+                &mut sample_rate,
+                channel_map_raw.as_mut_ptr(),
+                channel_map_raw.len(),
+            )
+        };
+        MaudioError::check(res)?;
+        // Could maybe cast when passing the ptr to miniaudio, but copying should be fine here
+        let mut channel_map: Vec<Channel> = Vec::new();
+        for c in channel_map_raw {
+            channel_map.push(Channel::try_from(c)?);
+        }
+        channel_map.truncate(channels as usize);
+
+        Ok(DataFormat {
+            format: format_raw.try_into()?,
+            channels,
+            sample_rate: sample_rate.try_into()?,
+            channel_map,
+        })
+    }
+
+    #[inline]
+    pub fn ma_data_source_get_cursor_in_pcm_frames<S: AsSourcePtr + ?Sized>(
+        source: &S,
+    ) -> MaResult<u64> {
+        let mut cursor = 0;
+        let res = unsafe {
+            sys::ma_data_source_get_cursor_in_pcm_frames(
+                private_data_source::source_ptr(source),
+                &mut cursor,
+            )
+        };
+        MaudioError::check(res)?;
+        Ok(cursor)
+    }
+
+    #[inline]
+    pub fn ma_data_source_get_length_in_pcm_frames<S: AsSourcePtr + ?Sized>(
+        source: &S,
+    ) -> MaResult<u64> {
+        let mut length = 0;
+        let res = unsafe {
+            sys::ma_data_source_get_length_in_pcm_frames(
+                private_data_source::source_ptr(source),
+                &mut length,
+            )
+        };
+        MaudioError::check(res)?;
+        Ok(length)
+    }
+
+    #[inline]
+    pub fn ma_data_source_get_cursor_in_seconds<S: AsSourcePtr + ?Sized>(
+        source: &S,
+    ) -> MaResult<f32> {
+        let mut cursor = 0.0f32;
+        let res = unsafe {
+            sys::ma_data_source_get_cursor_in_seconds(
+                private_data_source::source_ptr(source),
+                &mut cursor,
+            )
+        };
+        MaudioError::check(res)?;
+        Ok(cursor)
+    }
+
+    #[inline]
+    pub fn ma_data_source_get_length_in_seconds<S: AsSourcePtr + ?Sized>(
+        source: &S,
+    ) -> MaResult<f32> {
+        let mut length = 0.0f32;
+        let res = unsafe {
+            sys::ma_data_source_get_length_in_seconds(
+                private_data_source::source_ptr(source),
+                &mut length,
+            )
+        };
+        MaudioError::check(res)?;
+        Ok(length)
+    }
+
+    #[inline]
+    pub fn ma_data_source_set_looping<S: AsSourcePtr + ?Sized>(
+        source: &S,
+        is_looping: bool,
+    ) -> MaResult<()> {
+        let is_looping = is_looping as u32;
+        let res = unsafe {
+            sys::ma_data_source_set_looping(private_data_source::source_ptr(source), is_looping)
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_data_source_is_looping<S: AsSourcePtr + ?Sized>(source: &S) -> bool {
+        let res = unsafe {
+            sys::ma_data_source_is_looping(private_data_source::source_ptr(source) as *const _)
+        };
+        res == 1
+    }
+
+    // TODO
+    #[inline]
+    #[allow(dead_code)]
+    pub fn ma_data_source_set_range_in_pcm_frames<S: AsSourcePtr + ?Sized>(
+        source: &S,
+        range: core::ops::Range<u64>,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_data_source_set_range_in_pcm_frames(
+                private_data_source::source_ptr(source),
+                range.start,
+                range.end,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_data_source_get_range_in_pcm_frames<S: AsSourcePtr + ?Sized>(
+        source: &S,
+    ) -> core::ops::Range<u64> {
+        let mut begin = 0;
+        let mut end = 0;
+        unsafe {
+            sys::ma_data_source_get_range_in_pcm_frames(
+                private_data_source::source_ptr(source) as *const _,
+                &mut begin,
+                &mut end,
+            );
+        }
+        begin..end
+    }
+
+    #[inline]
+    pub fn ma_data_source_set_loop_point_in_pcm_frames<S: AsSourcePtr + ?Sized>(
+        source: &mut S,
+        begin: u64,
+        end: u64,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_data_source_set_loop_point_in_pcm_frames(
+                private_data_source::source_ptr(source),
+                begin,
+                end,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_data_source_get_loop_point_in_pcm_frames<S: AsSourcePtr + ?Sized>(
+        source: &S,
+    ) -> core::ops::Range<u64> {
+        let mut begin = 0;
+        let mut end: u64 = 0;
+        unsafe {
+            sys::ma_data_source_get_loop_point_in_pcm_frames(
+                private_data_source::source_ptr(source) as *const _,
+                &mut begin,
+                &mut end,
+            );
+        };
+        begin..end
+    }
+
+    #[inline]
+    pub fn ma_data_source_set_current<'a, F: PcmFormat>(
+        source: DataSourceRef<'a, F>,
+        current: DataSourceRef<'a, F>,
+    ) -> MaResult<()> {
+        let res = unsafe { sys::ma_data_source_set_current(source.to_raw(), current.to_raw()) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_data_source_get_current<'a, F: PcmFormat>(
+        source: DataSourceRef<'a, F>,
+    ) -> DataSourceRef<'a, F> {
+        let ptr = unsafe { sys::ma_data_source_get_current(source.to_raw() as *const _) };
+        DataSourceRef {
+            inner: ptr,
+            _marker: PhantomData,
+            _format: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn ma_data_source_set_next<'a, F: PcmFormat>(
+        source: DataSourceRef<'a, F>,
+        next: Option<DataSourceRef<'a, F>>,
+    ) -> MaResult<()> {
+        let next = next.map_or(std::ptr::null_mut(), |s| s.to_raw());
+        let res = unsafe { sys::ma_data_source_set_next(source.to_raw(), next) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_data_source_get_next<'a, F: PcmFormat>(
+        source: DataSourceRef<'a, F>,
+    ) -> Option<DataSourceRef<'a, F>> {
+        let ptr = unsafe {
+            // sys::ma_data_source_get_next(private_data_source::source_ptr(source) as *const _)
+            sys::ma_data_source_get_next(source.to_raw() as *const _)
+        };
+        if ptr.is_null() {
+            None
+        } else {
+            Some(DataSourceRef {
+                inner: ptr,
+                _marker: PhantomData,
+                _format: PhantomData,
+            })
+        }
+    }
+
+    // TODO
+    #[inline]
+    #[allow(unused)]
+    pub fn ma_data_source_set_next_callback<S: AsSourcePtr + ?Sized>(
+        source: &mut S,
+        get_next_cb: GetNextCallback,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_data_source_set_next_callback(
+                private_data_source::source_ptr(source),
+                get_next_cb,
+            )
+        };
+        MaudioError::check(res)
+    }
+
+    // TODO
+    #[inline]
+    #[allow(unused)]
+    pub fn ma_data_source_get_next_callback<S: AsSourcePtr + ?Sized>(
+        source: &S,
+    ) -> GetNextCallback {
+        unsafe {
+            sys::ma_data_source_get_next_callback(
+                private_data_source::source_ptr(source) as *const _
+            )
+        }
+    }
+}
+
+impl<F: PcmFormat, P: PcmSource<F>> Drop for DataSource<F, P> {
+    fn drop(&mut self) {
+        data_source_ffi::ma_data_source_uninit(self.as_raw_ptr() as *mut _);
+        drop(unsafe { Box::from_raw((*self.inner).vtable as *mut sys::ma_data_source_vtable) });
+        drop(unsafe { Box::from_raw(self.inner) });
+    }
+}
+
+#[derive(Debug)]
+pub struct DataSourceRef<'a, F: PcmFormat> {
+    inner: *mut sys::ma_data_source,
+    _marker: PhantomData<&'a ()>,
+    _format: PhantomData<F>,
+}
+
+impl<'a, F: PcmFormat> Binding for DataSourceRef<'a, F> {
+    type Raw = *mut sys::ma_data_source;
+
+    fn to_raw(&self) -> Self::Raw {
+        self.inner
+    }
+}
+
+impl<'a, F: PcmFormat> DataSourceRef<'a, F> {
+    pub(crate) fn from_ptr(ptr: *mut sys::ma_data_source) -> Self {
+        Self {
+            inner: ptr,
+            _marker: PhantomData,
+            _format: PhantomData,
+        }
+    }
+}
+
+impl<'a, 'b, F: PcmFormat> PartialEq<DataSourceRef<'b, F>> for DataSourceRef<'a, F> {
+    fn eq(&self, other: &DataSourceRef<'b, F>) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<'a, F: PcmFormat> Eq for DataSourceRef<'a, F> {}
+
+impl<'a, F: PcmFormat> Clone for DataSourceRef<'a, F> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'a, F: PcmFormat> Copy for DataSourceRef<'a, F> {}
+
+impl<'a, F: PcmFormat> DataSourceRef<'a, F> {
+    pub fn data_format(&self) -> MaResult<DataFormat> {
+        data_source_ffi::ma_data_source_get_data_format(self)
+    }
+
+    pub fn cursor_in_pcm_frames(&self) -> MaResult<u64> {
+        data_source_ffi::ma_data_source_get_cursor_in_pcm_frames(self)
+    }
+
+    pub fn length_in_pcm_frames(&self) -> MaResult<u64> {
+        data_source_ffi::ma_data_source_get_length_in_pcm_frames(self)
+    }
+
+    pub fn cursor_in_seconds(&self) -> MaResult<f32> {
+        data_source_ffi::ma_data_source_get_cursor_in_seconds(self)
+    }
+
+    pub fn length_in_seconds(&self) -> MaResult<f32> {
+        data_source_ffi::ma_data_source_get_length_in_seconds(self)
+    }
+
+    pub fn looping(&self) -> bool {
+        data_source_ffi::ma_data_source_is_looping(self)
+    }
+
+    pub fn range_in_pcm_frames(&self) -> core::ops::Range<u64> {
+        data_source_ffi::ma_data_source_get_range_in_pcm_frames(self)
+    }
+
+    pub fn set_loop_point_in_pcm_frames(&mut self, begin: u64, end: u64) -> MaResult<()> {
+        data_source_ffi::ma_data_source_set_loop_point_in_pcm_frames(self, begin, end)
+    }
+
+    pub fn loop_point_in_pcm_frames(&self) -> core::ops::Range<u64> {
+        data_source_ffi::ma_data_source_get_loop_point_in_pcm_frames(self)
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use crate::data_source::data_source_builder::DataSourceBuilder;
+
+    use super::*;
+    #[test]
+    fn test_custom_data_source_basic_test() {
+        let data = vec![0.1; 1000];
+        let mut ds = DataSourceBuilder::new(1, SampleRate::Sr44100)
+            .build_f32(data)
+            .unwrap();
+
+        let out = ds.read_pcm_frames(40).unwrap();
+
+        assert_eq!(out.data.len(), 40);
+    }
+}

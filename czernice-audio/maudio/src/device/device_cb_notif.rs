@@ -1,0 +1,198 @@
+use maudio_sys::ffi as sys;
+
+use crate::{
+    device::device_builder::{
+        CaptureDeviceState, DeviceBackendState, DuplexDeviceState, LoopbackDeviceState,
+        PlaybackDeviceState,
+    },
+    pcm_frames::{MaSampleFormat, PcmFormat},
+    util::device_notif::DeviceNotificationType,
+};
+
+pub(crate) unsafe extern "C" fn device_notification_playback_callback<F: PcmFormat, C>(
+    notification: *const sys::ma_device_notification,
+) {
+    if notification.is_null() {
+        return;
+    }
+
+    let device = (&*notification).pDevice;
+    if device.is_null() {
+        return;
+    }
+
+    let device_ref = unsafe { &*device };
+    let device_state_ref = unsafe { &*device_ref.pUserData.cast::<DeviceBackendState>() };
+    let state = unsafe {
+        &*device_state_ref
+            .callback_state
+            .data
+            .cast::<PlaybackDeviceState<F, C>>()
+    };
+
+    let mask = match (&*notification).type_ {
+        sys::ma_device_notification_type_ma_device_notification_type_started => {
+            DeviceNotificationType::Started.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_stopped => {
+            DeviceNotificationType::Stopped.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_rerouted => {
+            DeviceNotificationType::Rerouted.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_interruption_began => {
+            DeviceNotificationType::InterruptionBegan.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_interruption_ended => {
+            DeviceNotificationType::InterruptionEnded.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_unlocked => {
+            DeviceNotificationType::Unlocked.bit()
+        }
+        _ => 0,
+    };
+
+    state.state_notif.store_notifications(mask);
+}
+
+pub(crate) unsafe extern "C" fn device_notification_capture_callback<F: PcmFormat, C>(
+    notification: *const sys::ma_device_notification,
+) {
+    if notification.is_null() {
+        return;
+    }
+
+    let device = (&*notification).pDevice;
+    if device.is_null() {
+        return;
+    }
+
+    let device_ref = unsafe { &*device };
+    let device_state_ref = unsafe { &*device_ref.pUserData.cast::<DeviceBackendState>() };
+    let state = unsafe {
+        &*device_state_ref
+            .callback_state
+            .data
+            .cast::<CaptureDeviceState<F, C>>()
+    };
+
+    let mask = match (&*notification).type_ {
+        sys::ma_device_notification_type_ma_device_notification_type_started => {
+            DeviceNotificationType::Started.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_stopped => {
+            DeviceNotificationType::Stopped.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_rerouted => {
+            DeviceNotificationType::Rerouted.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_interruption_began => {
+            DeviceNotificationType::InterruptionBegan.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_interruption_ended => {
+            DeviceNotificationType::InterruptionEnded.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_unlocked => {
+            DeviceNotificationType::Unlocked.bit()
+        }
+        _ => 0,
+    };
+
+    state.state_notif.store_notifications(mask);
+}
+
+pub(crate) unsafe extern "C" fn device_notification_duplex_callback<
+    F: MaSampleFormat,
+    P: MaSampleFormat,
+    C,
+>(
+    notification: *const sys::ma_device_notification,
+) {
+    if notification.is_null() {
+        return;
+    }
+
+    let device = (&*notification).pDevice;
+    if device.is_null() {
+        return;
+    }
+
+    let device_ref = unsafe { &*device };
+    let device_state_ref = unsafe { &*device_ref.pUserData.cast::<DeviceBackendState>() };
+    let state = unsafe {
+        &*device_state_ref
+            .callback_state
+            .data
+            .cast::<DuplexDeviceState<F, P, C>>()
+    };
+
+    let mask = match (&*notification).type_ {
+        sys::ma_device_notification_type_ma_device_notification_type_started => {
+            DeviceNotificationType::Started.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_stopped => {
+            DeviceNotificationType::Stopped.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_rerouted => {
+            DeviceNotificationType::Rerouted.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_interruption_began => {
+            DeviceNotificationType::InterruptionBegan.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_interruption_ended => {
+            DeviceNotificationType::InterruptionEnded.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_unlocked => {
+            DeviceNotificationType::Unlocked.bit()
+        }
+        _ => 0,
+    };
+
+    state.state_notif.store_notifications(mask);
+}
+
+pub(crate) unsafe extern "C" fn device_notification_loopback_callback<F: PcmFormat, C>(
+    notification: *const sys::ma_device_notification,
+) {
+    if notification.is_null() {
+        return;
+    }
+
+    let device = (&*notification).pDevice;
+    if device.is_null() {
+        return;
+    }
+
+    let device_ref = unsafe { &*device };
+    let device_state_ref = unsafe { &*device_ref.pUserData.cast::<DeviceBackendState>() };
+    let state = unsafe {
+        &*device_state_ref
+            .callback_state
+            .data
+            .cast::<LoopbackDeviceState<F, C>>()
+    };
+
+    let mask = match (&*notification).type_ {
+        sys::ma_device_notification_type_ma_device_notification_type_started => {
+            DeviceNotificationType::Started.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_stopped => {
+            DeviceNotificationType::Stopped.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_rerouted => {
+            DeviceNotificationType::Rerouted.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_interruption_began => {
+            DeviceNotificationType::InterruptionBegan.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_interruption_ended => {
+            DeviceNotificationType::InterruptionEnded.bit()
+        }
+        sys::ma_device_notification_type_ma_device_notification_type_unlocked => {
+            DeviceNotificationType::Unlocked.bit()
+        }
+        _ => 0,
+    };
+
+    state.state_notif.store_notifications(mask);
+}

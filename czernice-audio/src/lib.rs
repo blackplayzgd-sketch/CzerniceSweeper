@@ -201,4 +201,8 @@ czernicefn!(net_xoknox_czernicesweeper_czerniceaudio_CzerniceAudio, (env, class)
     fn nsetBitDepth(sound: jlong, depth: jint) {
         with_czernice_playback(sound, |sound| sound.set_bit_depth(depth.cast_unsigned())).simply_err();
     }
+
+    // fn nsetOnEndCallback(sound: jlong, callback: jobject) {
+    //
+    // }
 });

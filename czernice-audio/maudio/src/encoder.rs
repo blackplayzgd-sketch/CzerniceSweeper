@@ -1,0 +1,888 @@
+//! Audio file encoding.
+use std::{marker::PhantomData, mem::MaybeUninit, path::Path};
+
+use maudio_sys::ffi as sys;
+
+use crate::{
+    audio::{formats::Format, sample_rate::SampleRate},
+    data_source::sources::decoder::{Cb, Fs},
+    device::device_builder::Unknown,
+    pcm_frames::{PcmFormat, S24Packed},
+    AllocationCallbacks, AsRawRef, Binding, ErrorKinds, MaResult, MaudioError,
+};
+
+/// Writes PCM audio frames into an encoded output destination.
+///
+/// An `Encoder` accepts interleaved PCM frames in the format specified by `F`,
+/// encodes them as `E`, and writes the resulting bytes to the destination type `D`.
+///
+/// # Thread-safety
+///
+/// /// This encoder does not support concurrent access.
+///
+/// To write from multiple threads, protect it with a [`Mutex`](std::sync::Mutex).
+/// Use an [`Arc`](std::sync::Arc) as well if shared ownership is required.
+///
+/// # Important notes
+///
+/// The encoder must be dropped normally to finalize its output. Terminating the
+/// process without running destructors, such as with [`std::process::exit`] or an
+/// termination signal (ctrlc) may leave the output file incomplete or malformed.
+/// Handle termination signals and perform a graceful shutdown before exiting.
+///
+/// # Format support
+///
+/// Currently, miniaudio's streaming encoder only supports **WAV** output.
+///
+/// # What the encoder does
+///
+/// An encoder sits between raw PCM audio and some encoded output destination:
+///
+/// - you provide PCM frames with [`Encoder::write_pcm_frames`]
+/// - the encoder converts them into the selected encoded format
+/// - the encoded bytes are written to the file or writer chosen during construction
+///
+/// # Input and output
+///
+/// The encoder's **destination** is chosen once at build time:
+///
+/// - [`EncoderBuilder::build_path`] creates an encoder that writes to a file path
+/// - [`EncoderBuilder::build_writer`] creates an encoder that writes through custom callbacks
+///
+/// After construction, audio data can be supplied manually through
+/// [`Encoder::write_pcm_frames`].
+///
+/// # PCM requirements
+///
+/// The written PCM data must already match the encoder's configured:
+///
+/// - sample format
+/// - channel count
+/// - sample rate
+///
+/// No automatic conversion is performed by the encoder.
+/// If these are not supported by the output file type an error will be returned.
+///
+/// # Examples
+///
+/// Writing to a file:
+///
+/// ```no_run
+/// # use std::path::PathBuf;
+/// # use maudio::encoder::EncoderBuilder;
+/// # use maudio::{MaResult, audio::sample_rate::SampleRate};
+/// # fn main() -> MaResult<()> {
+/// let path = PathBuf::from("out.flac");
+///
+/// let mut encoder = EncoderBuilder::new_f32(2, SampleRate::Sr44100)
+///     .wav()
+///     .build_path(&path)?;
+///
+/// let pcm = vec![0.0f32; 512 * 2];
+/// encoder.write_pcm_frames(&pcm)?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Writing to a custom writer:
+///
+/// ```no_run
+/// # use std::fs::File;
+/// # use maudio::encoder::EncoderBuilder;
+/// # use maudio::{MaResult, audio::sample_rate::SampleRate};
+/// # fn main() -> MaResult<()> {
+/// let file = File::create("out.wav").unwrap();
+///
+/// let mut encoder = EncoderBuilder::new_i16(2, SampleRate::Sr44100)
+///     .wav()
+///     .build_writer(file)?;
+///
+/// let pcm = vec![0i16; 256 * 2];
+/// encoder.write_pcm_frames(&pcm)?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct Encoder<F: PcmFormat, E: CodecFormat, D> {
+    inner: *mut sys::ma_encoder,
+    channels: u32,
+    #[allow(unused)]
+    sample_rate: SampleRate,
+    #[allow(unused)]
+    format: Format,
+    #[allow(unused)]
+    user_data: Option<EncoderUserDataDestructor>,
+    _format: PhantomData<F>,
+    _encoding: PhantomData<E>,
+    _destination: PhantomData<D>,
+}
+
+unsafe impl<F: PcmFormat, E: CodecFormat, D> Send for Encoder<F, E, D> {}
+
+type EncoderUserDataDestructor = (*mut core::ffi::c_void, fn(*mut core::ffi::c_void));
+
+impl<F: PcmFormat, E: CodecFormat, D> Binding for Encoder<F, E, D> {
+    type Raw = *mut sys::ma_encoder;
+
+    fn to_raw(&self) -> Self::Raw {
+        self.inner
+    }
+}
+
+impl<F: PcmFormat, E: CodecFormat, D> Encoder<F, E, D> {
+    // TODO: Test if this works with F::PcmUnit (i32)
+    pub fn write_pcm_frames(&mut self, source: &[F::StorageUnit]) -> MaResult<u64> {
+        encoder_ffi::ma_encoder_write_pcm_frames(self, source)
+    }
+}
+
+// Private methods
+impl<F: PcmFormat, E: CodecFormat, D> Encoder<F, E, D> {
+    fn new(
+        inner: *mut sys::ma_encoder,
+        channels: u32,
+        sample_rate: SampleRate,
+        format: Format,
+    ) -> Self {
+        Self {
+            inner,
+            channels,
+            sample_rate,
+            format,
+            user_data: None,
+            _format: PhantomData,
+            _encoding: PhantomData,
+            _destination: PhantomData,
+        }
+    }
+
+    fn init_from_file(config: &EncoderBuilder<F, E>, path: &Path) -> MaResult<Encoder<F, E, Fs>> {
+        let mut mem: Box<std::mem::MaybeUninit<sys::ma_encoder>> = Box::new(MaybeUninit::uninit());
+
+        Encoder::<F, E, D>::init_from_file_internal(path, config, mem.as_mut_ptr())?;
+
+        let inner: *mut sys::ma_encoder = Box::into_raw(mem) as *mut sys::ma_encoder;
+        Ok(Encoder::new(
+            inner,
+            config.channels,
+            config.sample_rate,
+            config.format,
+        ))
+    }
+
+    // TODO: Add alternative without Seek
+    fn init_from_writer<W: WriteSeek>(
+        config: &EncoderBuilder<F, E>,
+        writer: W,
+    ) -> MaResult<Encoder<F, E, Cb>> {
+        let mut mem: Box<std::mem::MaybeUninit<sys::ma_encoder>> = Box::new(MaybeUninit::uninit());
+
+        let user_data = Box::new(EncoderUserData { writer });
+        let user_data_ptr = Box::into_raw(user_data) as *mut core::ffi::c_void;
+        encoder_ffi::ma_encoder_init(
+            Some(encoder_write_proc::<W>),
+            Some(encoder_seek_proc::<W>),
+            user_data_ptr,
+            config,
+            mem.as_mut_ptr(),
+        )?;
+
+        let inner: *mut sys::ma_encoder = Box::into_raw(mem) as *mut sys::ma_encoder;
+        let mut encoder = Encoder::new(inner, config.channels, config.sample_rate, config.format);
+        encoder.user_data = Some((user_data_ptr, encoder_user_data_drop::<W>));
+        Ok(encoder)
+    }
+
+    fn init_from_file_internal(
+        path: &Path,
+        config: &EncoderBuilder<F, E>,
+        encoder: *mut sys::ma_encoder,
+    ) -> MaResult<()> {
+        #[cfg(windows)]
+        {
+            let path = crate::wide_null_terminated(path);
+
+            encoder_ffi::ma_encoder_init_file_w(&path, config, encoder)
+        }
+
+        #[cfg(not(windows))]
+        {
+            let path = crate::cstring_from_path(path)?;
+
+            encoder_ffi::ma_encoder_init_file(path, config, encoder)
+        }
+    }
+}
+
+/// Trait alias for types that implement both [`std::io::Write`] and [`std::io::Seek`].
+///
+/// This is used by [`EncoderBuilder::build_writer`] to accept custom output
+/// destinations for encoded audio data.
+pub trait WriteSeek: std::io::Write + std::io::Seek {}
+impl<T: std::io::Write + std::io::Seek> WriteSeek for T {}
+
+struct EncoderUserData<W> {
+    writer: W,
+}
+
+unsafe extern "C" fn encoder_write_proc<W: WriteSeek>(
+    encoder: *mut sys::ma_encoder,
+    buffer_in: *const core::ffi::c_void,
+    bytes_to_write: usize,
+    bytes_written: *mut usize,
+) -> sys::ma_result {
+    if encoder.is_null() || buffer_in.is_null() || bytes_written.is_null() {
+        return sys::ma_result_MA_INVALID_ARGS;
+    }
+
+    // Make sure we don't leave this uninitialized
+    *bytes_written = 0;
+
+    let user_data = &mut *((&*encoder).pUserData as *mut EncoderUserData<W>);
+
+    let slice = core::slice::from_raw_parts(buffer_in as _, bytes_to_write);
+
+    match user_data.writer.write_all(slice) {
+        Ok(()) => {
+            *bytes_written = bytes_to_write;
+            sys::ma_result_MA_SUCCESS
+        }
+        Err(_) => sys::ma_result_MA_ERROR,
+    }
+}
+
+unsafe extern "C" fn encoder_seek_proc<W: WriteSeek>(
+    encoder: *mut sys::ma_encoder,
+    byte_offset: i64,
+    origin: sys::ma_seek_origin,
+) -> sys::ma_result {
+    if encoder.is_null() {
+        return sys::ma_result_MA_INVALID_ARGS;
+    }
+
+    let user_data = &mut *((&*encoder).pUserData as *mut EncoderUserData<W>);
+
+    let pos = match origin {
+        sys::ma_seek_origin_ma_seek_origin_start => {
+            if byte_offset < 0 {
+                return sys::ma_result_MA_INVALID_ARGS;
+            }
+            std::io::SeekFrom::Start(byte_offset as _)
+        }
+        sys::ma_seek_origin_ma_seek_origin_current => std::io::SeekFrom::Current(byte_offset as _),
+        sys::ma_seek_origin_ma_seek_origin_end => std::io::SeekFrom::End(byte_offset as _),
+        _ => return sys::ma_result_MA_INVALID_ARGS,
+    };
+
+    match user_data.writer.seek(pos) {
+        Ok(_) => sys::ma_result_MA_SUCCESS,
+        Err(_) => sys::ma_result_MA_ERROR,
+    }
+}
+
+#[allow(unused)]
+unsafe extern "C" fn encoder_seek_proc_no_op(
+    encoder: *mut sys::ma_encoder,
+    _byte_offset: i64,
+    _origin: sys::ma_seek_origin,
+) -> sys::ma_result {
+    if encoder.is_null() {
+        return sys::ma_result_MA_INVALID_ARGS;
+    }
+
+    sys::ma_result_MA_SUCCESS
+}
+
+mod encoder_ffi {
+    use maudio_sys::ffi as sys;
+
+    use crate::{
+        encoder::{CodecFormat, Encoder, EncoderBuilder},
+        pcm_frames::PcmFormat,
+        AsRawRef, Binding, MaResult, MaudioError,
+    };
+
+    #[inline]
+    pub fn ma_encoder_init<F: PcmFormat, E: CodecFormat>(
+        on_write: sys::ma_encoder_write_proc,
+        on_seek: sys::ma_encoder_seek_proc,
+        user_data: *mut core::ffi::c_void,
+        config: &EncoderBuilder<F, E>,
+        encoder: *mut sys::ma_encoder,
+    ) -> MaResult<()> {
+        let res = unsafe {
+            sys::ma_encoder_init(on_write, on_seek, user_data, config.as_raw_ptr(), encoder)
+        };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    #[cfg(not(windows))]
+    pub fn ma_encoder_init_file<F: PcmFormat, E: CodecFormat>(
+        path: std::ffi::CString,
+        config: &EncoderBuilder<F, E>,
+        encoder: *mut sys::ma_encoder,
+    ) -> MaResult<()> {
+        let res = unsafe { sys::ma_encoder_init_file(path.as_ptr(), config.as_raw_ptr(), encoder) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    #[cfg(windows)]
+    pub fn ma_encoder_init_file_w<F: PcmFormat, E: CodecFormat>(
+        path: &[u16],
+        config: &EncoderBuilder<F, E>,
+        encoder: *mut sys::ma_encoder,
+    ) -> MaResult<()> {
+        let res =
+            unsafe { sys::ma_encoder_init_file_w(path.as_ptr(), config.as_raw_ptr(), encoder) };
+        MaudioError::check(res)
+    }
+
+    #[inline]
+    pub fn ma_encoder_uninit<F: PcmFormat, E: CodecFormat, D>(encoder: &mut Encoder<F, E, D>) {
+        unsafe {
+            sys::ma_encoder_uninit(encoder.to_raw());
+        };
+    }
+
+    pub fn ma_encoder_write_pcm_frames<F: PcmFormat, E: CodecFormat, D>(
+        encoder: &mut Encoder<F, E, D>,
+        source: &[F::StorageUnit],
+    ) -> MaResult<u64> {
+        if source.is_empty() || encoder.channels == 0 {
+            return Err(MaudioError::from_ma_result(sys::ma_result_MA_INVALID_ARGS));
+        };
+        let frames = source.len() / (encoder.channels as usize) / F::VEC_STORE_UNITS_PER_FRAME;
+
+        ma_encoder_write_pcm_frames_internal(
+            encoder,
+            source.as_ptr() as *const core::ffi::c_void,
+            frames as u64,
+        )
+    }
+
+    #[inline]
+    fn ma_encoder_write_pcm_frames_internal<F: PcmFormat, E: CodecFormat, D>(
+        encoder: &mut Encoder<F, E, D>,
+        frames_in: *const core::ffi::c_void,
+        frame_count: u64,
+    ) -> MaResult<u64> {
+        let mut frames_written: u64 = 0;
+        let res = unsafe {
+            sys::ma_encoder_write_pcm_frames(
+                encoder.to_raw(),
+                frames_in,
+                frame_count,
+                &mut frames_written,
+            )
+        };
+        MaudioError::check(res)?;
+        Ok(frames_written)
+    }
+}
+
+fn encoder_user_data_drop<W: WriteSeek>(ptr: *mut core::ffi::c_void) {
+    drop(unsafe { Box::from_raw(ptr as *mut EncoderUserData<W>) });
+}
+
+impl<F: PcmFormat, E: CodecFormat, D> Drop for Encoder<F, E, D> {
+    fn drop(&mut self) {
+        encoder_ffi::ma_encoder_uninit(self);
+        if let Some((ptr, destructor)) = self.user_data {
+            destructor(ptr);
+        }
+        drop(unsafe { Box::from_raw(self.inner) });
+    }
+}
+
+/// Encoding/container formats supported by [`Encoder`].
+enum EncodingFormat {
+    Wav,
+    Flac,
+    Mp3,
+    Vorbis,
+}
+
+impl From<EncodingFormat> for sys::ma_encoding_format {
+    fn from(value: EncodingFormat) -> Self {
+        match value {
+            EncodingFormat::Wav => sys::ma_encoding_format_ma_encoding_format_wav,
+            EncodingFormat::Flac => sys::ma_encoding_format_ma_encoding_format_flac,
+            EncodingFormat::Mp3 => sys::ma_encoding_format_ma_encoding_format_mp3,
+            EncodingFormat::Vorbis => sys::ma_encoding_format_ma_encoding_format_vorbis,
+        }
+    }
+}
+
+impl TryFrom<sys::ma_encoding_format> for EncodingFormat {
+    type Error = MaudioError;
+
+    fn try_from(value: sys::ma_encoding_format) -> Result<Self, Self::Error> {
+        match value {
+            sys::ma_encoding_format_ma_encoding_format_wav => Ok(EncodingFormat::Wav),
+            sys::ma_encoding_format_ma_encoding_format_flac => Ok(EncodingFormat::Flac),
+            sys::ma_encoding_format_ma_encoding_format_mp3 => Ok(EncodingFormat::Mp3),
+            sys::ma_encoding_format_ma_encoding_format_vorbis => Ok(EncodingFormat::Vorbis),
+            other => Err(MaudioError::new_ma_error(ErrorKinds::unknown_enum::<
+                EncodingFormat,
+            >(other as i64))),
+        }
+    }
+}
+
+/// Builder for creating an [`Encoder`].
+///
+/// `EncoderBuilder` uses a staged type-state API to guide encoder construction:
+///
+/// 1. choose the PCM sample format with a `new_*` constructor
+/// 2. choose the encoding/container format with methods like [`Self::wav`] (others not supported for now)
+/// 3. build the encoder for a destination with [`Self::build_path`] or [`Self::build_writer`]
+///
+pub struct EncoderBuilder<F = Unknown, E = Unknown> {
+    inner: sys::ma_encoder_config,
+    format: Format,
+    channels: u32,
+    sample_rate: SampleRate,
+    _format: PhantomData<F>,
+    _encoding: PhantomData<E>,
+}
+
+impl<F: PcmFormat, E: CodecFormat> AsRawRef for EncoderBuilder<F, E> {
+    type Raw = sys::ma_encoder_config;
+
+    fn as_raw(&self) -> &Self::Raw {
+        &self.inner
+    }
+}
+
+impl EncoderBuilder<Unknown, Unknown> {
+    pub fn new_inner(
+        channels: u32,
+        sample_rate: SampleRate,
+        format: Format,
+    ) -> sys::ma_encoder_config {
+        // Format::U8 and encoding format unkwown are placeholders
+        let mut config = unsafe {
+            sys::ma_encoder_config_init(
+                sys::ma_encoding_format_ma_encoding_format_unknown,
+                format.into(),
+                channels,
+                sample_rate.into(),
+            )
+        };
+        if let Some(alloc) = AllocationCallbacks::clone_callbacks() {
+            config.allocationCallbacks = alloc;
+        };
+        config
+    }
+
+    pub fn new_u8(channels: u32, sample_rate: SampleRate) -> EncoderBuilder<u8, Unknown> {
+        let inner = EncoderBuilder::new_inner(channels, sample_rate, Format::U8);
+        EncoderBuilder {
+            inner,
+            format: Format::U8,
+            channels,
+            sample_rate,
+            _format: PhantomData,
+            _encoding: PhantomData,
+        }
+    }
+
+    pub fn new_i16(channels: u32, sample_rate: SampleRate) -> EncoderBuilder<i16, Unknown> {
+        let inner = EncoderBuilder::new_inner(channels, sample_rate, Format::S16);
+        EncoderBuilder {
+            inner,
+            format: Format::S16,
+            channels,
+            sample_rate,
+            _format: PhantomData,
+            _encoding: PhantomData,
+        }
+    }
+
+    pub fn new_i32(channels: u32, sample_rate: SampleRate) -> EncoderBuilder<i32, Unknown> {
+        let inner = EncoderBuilder::new_inner(channels, sample_rate, Format::S32);
+        EncoderBuilder {
+            inner,
+            format: Format::S32,
+            channels,
+            sample_rate,
+            _format: PhantomData,
+            _encoding: PhantomData,
+        }
+    }
+
+    pub fn new_s24_packed(
+        channels: u32,
+        sample_rate: SampleRate,
+    ) -> EncoderBuilder<S24Packed, Unknown> {
+        let inner = EncoderBuilder::new_inner(channels, sample_rate, Format::S24Packed);
+        EncoderBuilder {
+            inner,
+            format: Format::S24Packed,
+            channels,
+            sample_rate,
+            _format: PhantomData,
+            _encoding: PhantomData,
+        }
+    }
+
+    pub fn new_f32(channels: u32, sample_rate: SampleRate) -> EncoderBuilder<f32, Unknown> {
+        let inner = EncoderBuilder::new_inner(channels, sample_rate, Format::F32);
+        EncoderBuilder {
+            inner,
+            format: Format::F32,
+            channels,
+            sample_rate,
+            _format: PhantomData,
+            _encoding: PhantomData,
+        }
+    }
+}
+
+pub struct Wav {}
+
+/// Trait for the codec formats supporter by the `Encoder`
+pub trait CodecFormat {}
+impl CodecFormat for Wav {}
+
+impl<F: PcmFormat> EncoderBuilder<F, Unknown> {
+    pub fn wav(mut self) -> EncoderBuilder<F, Wav> {
+        self.inner.encodingFormat = EncodingFormat::Wav.into();
+        EncoderBuilder {
+            inner: self.inner,
+            format: self.format,
+            channels: self.channels,
+            sample_rate: self.sample_rate,
+            _format: PhantomData,
+            _encoding: PhantomData,
+        }
+    }
+}
+
+impl<F: PcmFormat, E: CodecFormat> EncoderBuilder<F, E> {
+    pub fn build_path(&self, path: &Path) -> MaResult<Encoder<F, E, Fs>> {
+        Encoder::<F, E, Fs>::init_from_file(self, path)
+    }
+
+    pub fn build_writer<W: WriteSeek>(&self, writer: W) -> MaResult<Encoder<F, E, Cb>> {
+        Encoder::<F, E, Cb>::init_from_writer(self, writer)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        audio::sample_rate::SampleRate,
+        data_source::sources::decoder::{DecoderBuilder, DecoderOps},
+        encoder::EncoderBuilder,
+        test_assets::{
+            decoded_data::{
+                asset_interleaved_f32, asset_interleaved_i16, asset_interleaved_i32,
+                asset_interleaved_s24_packed_le, asset_interleaved_u8,
+            },
+            temp_file::{unique_tmp_path, TempFileGuard},
+        },
+    };
+
+    #[test]
+    fn test_encoder_write_from_path_u8() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_u8(2, frames_total, 1);
+
+        let guard = TempFileGuard::new(unique_tmp_path("test_encoder_write_from_path_u8", "wav"));
+
+        let mut enc = EncoderBuilder::new_u8(2, SampleRate::Sr48000)
+            .wav()
+            .build_path(guard.path())
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_u8()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+
+    #[test]
+    fn test_encoder_write_from_path_i16() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_i16(2, frames_total, 1);
+
+        let guard = TempFileGuard::new(unique_tmp_path("test_encoder_write_from_path_i16", "wav"));
+
+        let mut enc = EncoderBuilder::new_i16(2, SampleRate::Sr48000)
+            .wav()
+            .build_path(guard.path())
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_i16()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+
+    #[test]
+    fn test_encoder_write_from_path_i32() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_i32(2, frames_total, 1);
+
+        let guard = TempFileGuard::new(unique_tmp_path("test_encoder_write_from_path_i32", "wav"));
+
+        let mut enc = EncoderBuilder::new_i32(2, SampleRate::Sr48000)
+            .wav()
+            .build_path(guard.path())
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_i32()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+
+    #[test]
+    fn test_encoder_write_from_path_s24_packed() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_s24_packed_le(2, frames_total, 1);
+
+        let guard = TempFileGuard::new(unique_tmp_path(
+            "test_encoder_write_from_path_s24_packed",
+            "wav",
+        ));
+
+        let mut enc = EncoderBuilder::new_s24_packed(2, SampleRate::Sr48000)
+            .wav()
+            .build_path(guard.path())
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_s24_packed()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+
+    #[test]
+    fn test_encoder_write_from_path_f32() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_f32(2, frames_total, 1.0);
+
+        let guard = TempFileGuard::new(unique_tmp_path("test_encoder_write_from_path_f32", "wav"));
+
+        let mut enc = EncoderBuilder::new_f32(2, SampleRate::Sr48000)
+            .wav()
+            .build_path(guard.path())
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_f32()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+
+    #[test]
+    fn test_encoder_write_from_file_u8() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_u8(2, frames_total, 1);
+
+        let guard = TempFileGuard::new(unique_tmp_path("test_encoder_write_from_file_u8", "wav"));
+        let file = std::fs::File::create(guard.path()).unwrap();
+
+        let mut enc = EncoderBuilder::new_u8(2, SampleRate::Sr48000)
+            .wav()
+            .build_writer(file)
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_u8()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+
+    #[test]
+    fn test_encoder_write_from_file_i16() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_i16(2, frames_total, 1);
+
+        let guard = TempFileGuard::new(unique_tmp_path("test_encoder_write_from_file_i16", "wav"));
+        let file = std::fs::File::create(guard.path()).unwrap();
+
+        let mut enc = EncoderBuilder::new_i16(2, SampleRate::Sr48000)
+            .wav()
+            .build_writer(file)
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_i16()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+
+    #[test]
+    fn test_encoder_write_from_file_i32() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_i32(2, frames_total, 1);
+
+        let guard = TempFileGuard::new(unique_tmp_path("test_encoder_write_from_file_i32", "wav"));
+        let file = std::fs::File::create(guard.path()).unwrap();
+
+        let mut enc = EncoderBuilder::new_i32(2, SampleRate::Sr48000)
+            .wav()
+            .build_writer(file)
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_i32()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+
+    #[test]
+    fn test_encoder_write_from_file_s24_packed() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_s24_packed_le(2, frames_total, 1);
+
+        let guard = TempFileGuard::new(unique_tmp_path(
+            "test_encoder_write_from_file_s24_packed",
+            "wav",
+        ));
+        let file = std::fs::File::create(guard.path()).unwrap();
+
+        let mut enc = EncoderBuilder::new_s24_packed(2, SampleRate::Sr48000)
+            .wav()
+            .build_writer(file)
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_s24_packed()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+
+    #[test]
+    fn test_encoder_write_from_file_f32() {
+        let frames_total: usize = 40;
+        let data = asset_interleaved_f32(2, frames_total, 1.0);
+
+        let guard = TempFileGuard::new(unique_tmp_path("test_encoder_write_from_file_f32", "wav"));
+        let file = std::fs::File::create(guard.path()).unwrap();
+
+        let mut enc = EncoderBuilder::new_f32(2, SampleRate::Sr48000)
+            .wav()
+            .build_writer(file)
+            .unwrap();
+
+        let written = enc.write_pcm_frames(&data).unwrap();
+
+        drop(enc);
+
+        assert_eq!(frames_total, written as usize);
+
+        let mut dec = DecoderBuilder::new_f32()
+            .channels(2)
+            .sample_rate(SampleRate::Sr48000)
+            .from_file(guard.path())
+            .unwrap();
+
+        let output = dec.read_pcm_frames(frames_total as u64).unwrap();
+
+        assert_eq!(&data, output.as_ref());
+    }
+}

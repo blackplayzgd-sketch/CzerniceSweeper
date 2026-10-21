@@ -35,7 +35,7 @@ public class CzerniceEqBandAddInfo extends Struct<CzerniceEqBandAddInfo> {
 
     static {
         Layout layout = __struct(
-                __member(8),
+                __member(POINTER_SIZE),
                 __member(8),
                 __member(8),
                 __member(4),
@@ -91,7 +91,6 @@ public class CzerniceEqBandAddInfo extends Struct<CzerniceEqBandAddInfo> {
 
 
     public CzerniceEqBandAddInfo set(
-
         long index,
         double frequency,
         double q,

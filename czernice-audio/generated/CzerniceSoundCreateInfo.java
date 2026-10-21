@@ -143,7 +143,6 @@ public class CzerniceSoundCreateInfo extends Struct<CzerniceSoundCreateInfo> {
 
 
     public CzerniceSoundCreateInfo set(
-
         ByteBuffer pData,
         int sampleRate,
         int channels,
