@@ -1,13 +1,13 @@
 package net.xoknox.czernicesweeper;
 
 import javafx.scene.Group;
-import javafx.scene.control.Button;
-import javafx.scene.control.CheckBox;
+import javafx.scene.control.*;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import lombok.Getter;
+import net.xoknox.czernicesweeper.czerniceaudio.CzerniceAudio;
 import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
 import static net.xoknox.czernicesweeper.Utils.*;
@@ -18,7 +18,7 @@ public class Game extends Pane implements IGameSettingable {
 
     private final Engine engine;
     private final Sweeper sweeper;
-    private final Text title = new Text(100, 70, "CzerniceSweeper v0.0.3-ζ");
+    private final Text title = new Text(100, 70, "CzerniceSweeper v0.0.4-ζ");
     private final CzerniceControl<Button> settingsButton = new CzerniceControl<>(new Button());
     private final ImageView titleImage = new ImageView(Textures.LOGO);
     @Getter
@@ -46,13 +46,15 @@ public class Game extends Pane implements IGameSettingable {
             double t = 0;
             @Override
             public void step(double dt) {
-                t += 2 * dt;
+                t += dt;
 
-                double sx = (Math.cos(t) + 1) / 2;
-                double sy = (Math.sin(t) + 1) / 2;
+                double sx = (Math.cos(2*t) + 1) / 2;
+                double sy = (Math.sin(2*t) + 1) / 2;
 
                 bg.setScaleX(fracOfRange(1, 1.4, sx));
                 bg.setScaleY(fracOfRange(1.4, 1,sx));
+
+                titleImage.setRotate(t * (180 / Math.PI));
 
                 t %= 2 * Math.PI;
             }
@@ -82,9 +84,30 @@ public class Game extends Pane implements IGameSettingable {
             sweeper.setHardMode(newValue);
         });
 
+        Menu modeMenu = new Menu("GaemMoad");
 
+        MenuItem normalMode = new MenuItem("Normal");
+        normalMode.setOnAction(e -> {
+            sweeper.setHardMode(false);
+            sweeper.setFormidableMode(false);
+        });
+        MenuItem hardMode = new MenuItem("Schwer");
+        hardMode.setOnAction(e -> {
+            sweeper.setHardMode(true);
+            sweeper.setFormidableMode(false);
+        });
+        MenuItem formidableMode = new MenuItem("Formidabel!");
+        formidableMode.setOnAction(e -> {
+            sweeper.setHardMode(true);
+            sweeper.setFormidableMode(true);
+        });
+        modeMenu.getItems().addAll(
+                normalMode, hardMode, formidableMode);
 
-
+        CzerniceControl<MenuBar> modeMenuBar = new CzerniceControl<>(new MenuBar(modeMenu));
+        modeMenuBar.setLayoutX(1100);
+        modeMenuBar.setLayoutY(260);
+        modeMenuBar.setPrefSize(100, 50);
 
         //button.setLayoutX(100);
         //button.setLayoutY(20);
@@ -110,7 +133,7 @@ public class Game extends Pane implements IGameSettingable {
 
          */
 
-        this.getChildren().addAll(sweeper, settingsButton, engine, titleImage, hardModeCheckBox);
+        this.getChildren().addAll(sweeper, settingsButton, engine, titleImage, modeMenuBar);
 
 
 
@@ -150,7 +173,7 @@ public class Game extends Pane implements IGameSettingable {
         pauseButton.setLayoutX(50);
         pauseButton.setLayoutY(770);
         pauseButton.main.setOnMouseClicked(e -> {
-            gameSettings.getBackgroundMusicPlayer().pause();
+            gameSettings.getBgMusic().toggle();
         });
 
         CzerniceControl<Button> skipButton = new CzerniceControl<>(new Button( "Skeep"));
@@ -159,7 +182,7 @@ public class Game extends Pane implements IGameSettingable {
         skipButton.setLayoutX(100);
         skipButton.setLayoutY(770);
         skipButton.main.setOnMouseClicked(e -> {
-            gameSettings.getBackgroundMusicPlayer().skip();
+            gameSettings.getBgMusic().skip();
         });
 
 

@@ -5,6 +5,7 @@ import javafx.scene.Scene;
 import javafx.stage.Stage;
 import lombok.Getter;
 import lombok.Setter;
+import net.xoknox.czernicesweeper.czerniceaudio.BetterBackgroundMusicPlayer;
 
 public class GameSettings {
     private final Property<Units> unit = new SimpleObjectProperty<>(Units.SECOND);
@@ -18,6 +19,13 @@ public class GameSettings {
     private final DoubleProperty lowFreqGain = new SimpleDoubleProperty(0);
     private final DoubleProperty midFreqGain = new SimpleDoubleProperty(0);
     private final DoubleProperty highFreqGain = new SimpleDoubleProperty(0);
+    private final DoubleProperty bitDepth = new SimpleDoubleProperty(24d);
+    private final DoubleProperty wet = new SimpleDoubleProperty(0);
+    private final DoubleProperty dry = new SimpleDoubleProperty(1d);
+    private final DoubleProperty feedback = new SimpleDoubleProperty(0);
+    private final DoubleProperty rateDivisor = new SimpleDoubleProperty(1d);
+
+
 
 
 
@@ -26,7 +34,7 @@ public class GameSettings {
     @Getter @Setter private Scene settingsScene;
     @Getter @Setter private Settings settings;
     @Getter @Setter private Game game;
-    @Getter @Setter private BackgroundMusicPlayer backgroundMusicPlayer;
+    @Getter @Setter private BetterBackgroundMusicPlayer bgMusic;
 
     public Property<Units> unitProperty() {
         return unit;
@@ -61,9 +69,21 @@ public class GameSettings {
     public DoubleProperty highFreqGainProperty() {
         return highFreqGain;
     }
-
-
-
+    public DoubleProperty bitDepthProperty() {
+        return bitDepth;
+    }
+    public DoubleProperty wetProperty() {
+        return wet;
+    }
+    public DoubleProperty dryProperty() {
+        return dry;
+    }
+    public DoubleProperty feedbackProperty() {
+        return feedback;
+    }
+    public DoubleProperty rateDivisorProperty() {
+        return rateDivisor;
+    }
 
     public void setUnit(Units unit) {
         this.unit.setValue(unit);
@@ -95,6 +115,23 @@ public class GameSettings {
     public void setHighFreqGain(double gain) {
         this.highFreqGain.setValue(gain);
     }
+    public void setBitDepth(double gain) {
+        this.bitDepth.setValue(gain);
+    }
+    public void setWet(double gain) {
+        this.wet.setValue(gain);
+    }
+    public void setDry(double gain) {
+        this.dry.setValue(gain);
+    }
+    public void setFeedback(double gain) {
+        this.feedback.setValue(gain);
+    }
+    public void setRateDivisor(double gain) {
+        this.rateDivisor.setValue(gain);
+    }
+
+
 
 
 

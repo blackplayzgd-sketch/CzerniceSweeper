@@ -30,6 +30,7 @@ public class Engine extends Group {
 
 
     public Engine(double posX, double posY, double size, double shaftLength, double shaftGirth, double pistonWidth, double pistonHeight) {
+
         this.shaftLength = shaftLength;
         this.pistonWidth = pistonWidth;
         this.pistonHeight = pistonHeight;

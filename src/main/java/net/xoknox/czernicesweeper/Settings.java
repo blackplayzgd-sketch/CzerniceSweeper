@@ -119,16 +119,16 @@ public class Settings extends Pane implements IGameSettingable {
         musicLabel.main.setAlignment(Pos.BASELINE_CENTER);
         musicLabel.setPrefSize(100, 40);
 
-        ArrayList<Double> sliderYs = new ArrayList<>(List.of(150d, 170d, 190d, 210d, 230d, 250d));
+        ArrayList<Double> sliderYs = new ArrayList<>(List.of(150d, 170d, 190d, 210d, 230d, 250d, 270d, 290d, 310d, 330d, 350d, 370d));
 
-        sliderYs = Utils.shuffle(sliderYs);
+        //sliderYs = Utils.shuffle(sliderYs);
 
         CzerniceControl<Slider> volumeSlider = new CzerniceControl<>(new Slider(0, 1, 0.5));
         volumeSlider.setLayoutX(450);
         volumeSlider.setLayoutY(sliderYs.get(0));
         volumeSlider.setPrefSize(150, 20);
         volumeSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
-            Settings.this.gameSettings.setMusicVolume((Double) newVal);
+            Settings.this.gameSettings.setMusicVolume(newVal.doubleValue());
         });
 
         CzerniceControl<Slider> rateSlider = new CzerniceControl<>(new Slider(0, 2, 1));
@@ -136,7 +136,7 @@ public class Settings extends Pane implements IGameSettingable {
         rateSlider.setLayoutY(sliderYs.get(1));
         rateSlider.setPrefSize(150, 20);
         rateSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
-            Settings.this.gameSettings.setMusicRate((Double) newVal);
+            Settings.this.gameSettings.setMusicRate(newVal.doubleValue());
         });
 
         CzerniceControl<Slider> balanceSlider = new CzerniceControl<>(new Slider(-1, 1, 0));
@@ -144,31 +144,71 @@ public class Settings extends Pane implements IGameSettingable {
         balanceSlider.setLayoutY(sliderYs.get(2));
         balanceSlider.setPrefSize(150, 20);
         balanceSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
-            Settings.this.gameSettings.setMusicBalance((Double) newVal);
+            Settings.this.gameSettings.setMusicBalance(newVal.doubleValue());
         });
 
-        CzerniceControl<Slider> lowFreqSlider = new CzerniceControl<>(new Slider(-12, 12, 0));
+        CzerniceControl<Slider> lowFreqSlider = new CzerniceControl<>(new Slider(-50, 50, 0));
         lowFreqSlider.setLayoutX(450);
         lowFreqSlider.setLayoutY(sliderYs.get(3));
         lowFreqSlider.setPrefSize(150, 20);
         lowFreqSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
-            Settings.this.gameSettings.setLowFreqGain((Double) newVal);
+            Settings.this.gameSettings.setLowFreqGain(newVal.doubleValue());
         });
 
-        CzerniceControl<Slider> midFreqSlider = new CzerniceControl<>(new Slider(-12, 12, 0));
+        CzerniceControl<Slider> midFreqSlider = new CzerniceControl<>(new Slider(-50, 50, 0));
         midFreqSlider.setLayoutX(450);
         midFreqSlider.setLayoutY(sliderYs.get(4));
         midFreqSlider.setPrefSize(150, 20);
         midFreqSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
-            Settings.this.gameSettings.setMidFreqGain((Double) newVal);
+            Settings.this.gameSettings.setMidFreqGain(newVal.doubleValue());
         });
 
-        CzerniceControl<Slider> highFreqSlider = new CzerniceControl<>(new Slider(-12, 12, 0));
+        CzerniceControl<Slider> highFreqSlider = new CzerniceControl<>(new Slider(-50, 50, 0));
         highFreqSlider.setLayoutX(450);
         highFreqSlider.setLayoutY(sliderYs.get(5));
         highFreqSlider.setPrefSize(150, 20);
         highFreqSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
-            Settings.this.gameSettings.setHighFreqGain((Double) newVal);
+            Settings.this.gameSettings.setHighFreqGain(newVal.doubleValue());
+        });
+
+        CzerniceControl<Slider> bitDepthSlider = new CzerniceControl<>(new Slider(0, 48, 24));
+        bitDepthSlider.setLayoutX(450);
+        bitDepthSlider.setLayoutY(sliderYs.get(6));
+        bitDepthSlider.setPrefSize(150, 20);
+        bitDepthSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setBitDepth(newVal.doubleValue());
+        });
+
+        CzerniceControl<Slider> wetSlider = new CzerniceControl<>(new Slider(-1, 1, 0));
+        wetSlider.setLayoutX(450);
+        wetSlider.setLayoutY(sliderYs.get(7));
+        wetSlider.setPrefSize(150, 20);
+        wetSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setWet(newVal.doubleValue());
+        });
+
+        CzerniceControl<Slider> drySlider = new CzerniceControl<>(new Slider(-1, 1, 0));
+        drySlider.setLayoutX(450);
+        drySlider.setLayoutY(sliderYs.get(8));
+        drySlider.setPrefSize(150, 20);
+        drySlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setDry(newVal.doubleValue());
+        });
+
+        CzerniceControl<Slider> feedbackSlider = new CzerniceControl<>(new Slider(-1, 1, 0));
+        feedbackSlider.setLayoutX(450);
+        feedbackSlider.setLayoutY(sliderYs.get(9));
+        feedbackSlider.setPrefSize(150, 20);
+        feedbackSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setFeedback(newVal.doubleValue());
+        });
+
+        CzerniceControl<Slider> rateDivisorSlider = new CzerniceControl<>(new Slider(-1, 1, 1));
+        rateDivisorSlider.setLayoutX(450);
+        rateDivisorSlider.setLayoutY(sliderYs.get(10));
+        rateDivisorSlider.setPrefSize(150, 20);
+        rateDivisorSlider.main.valueProperty().addListener((obs, oldVal, newVal) -> {
+            Settings.this.gameSettings.setRateDivisor(newVal.doubleValue());
         });
 
         CzerniceControl<Button> supernovaButton = new CzerniceControl<>(new Button("SUPERNOVA MOED"));
@@ -200,7 +240,7 @@ public class Settings extends Pane implements IGameSettingable {
                 backButton,
                 widthInput, heightInput, mineCountInput, updateButton,
                 colorButton,
-                volumeSlider, rateSlider, balanceSlider, lowFreqSlider, midFreqSlider, highFreqSlider, musicLabel,
+                volumeSlider, rateSlider, balanceSlider, lowFreqSlider, midFreqSlider, highFreqSlider, bitDepthSlider, wetSlider, drySlider, feedbackSlider, rateDivisorSlider, musicLabel,
                 supernovaButton);
     }
 

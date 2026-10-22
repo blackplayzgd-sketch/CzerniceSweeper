@@ -12,9 +12,10 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
+import net.xoknox.czernicesweeper.event.MinigameEvent;
 import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
-public class SkillCheck extends Group {
+public class SkillCheck extends Group implements IMinigameable {
     private final Rectangle marker = new Rectangle(2, 15);
     private final double speed;
     private final double completionMargin;
@@ -22,9 +23,6 @@ public class SkillCheck extends Group {
     private final DtAnimationTimer timer;
     private final double minCompletionX;
     private final double maxCompletionX;
-    private final BooleanProperty win = new SimpleBooleanProperty(false);
-    private final BooleanProperty lose = new SimpleBooleanProperty(false);
-
     private int moveDir = 1;
 
     public SkillCheck(double width, double speed, double completionMargin) {
@@ -83,18 +81,11 @@ public class SkillCheck extends Group {
 
     private void win() {
         System.out.println("won!");
-        win.set(true);
+        fireEvent(new MinigameEvent(this, MinigameEvent.MINIGAME_WON));
     }
 
     private void lose() {
-        lose.set(true);
+        fireEvent(new MinigameEvent(this, MinigameEvent.MINIGAME_LOST));
     }
 
-    public BooleanProperty winProperty() {
-        return win;
-    }
-
-    public BooleanProperty loseProperty() {
-        return lose;
-    }
 }

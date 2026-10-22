@@ -10,6 +10,7 @@ import javafx.scene.layout.Background;
 import lombok.Getter;
 import lombok.Setter;
 import net.xoknox.czernicesweeper.event.*;
+import org.intellij.lang.annotations.JdkConstants;
 
 import java.util.ArrayList;
 
@@ -22,7 +23,9 @@ public class SweeperBoard extends Group {
     private ArrayGrid<Boolean> flags;
     private ArrayGrid<Boolean> revealed;
 
+    @Getter
     private int width;
+    @Getter
     private int height;
     private int mineCount;
 

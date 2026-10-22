@@ -4,6 +4,7 @@ import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
+import lombok.Getter;
 import net.xoknox.czernicesweeper.applicationinstallation.AppData;
 
 import java.io.File;
@@ -14,7 +15,8 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 
 public class BackgroundMusicPlayer implements IGameSettingable {
-    private final ArrayList<String[]> songs = new ArrayList<>();
+    @Getter
+    private static final ArrayList<String[]> songs = new ArrayList<>();
     private double lowGain = 0d;
     private double midGain = 0d;
     private double highGain = 0d;
@@ -48,9 +50,8 @@ public class BackgroundMusicPlayer implements IGameSettingable {
             double actualGain = newValue.doubleValue() < 0 ? newValue.doubleValue() * 2 : newValue.doubleValue();
             lowGain = actualGain;
             setBandsGain(player, lowGain, midGain, highGain);
-
-
         });
+
         this.gameSettings.midFreqGainProperty().addListener((observable, oldValue, newValue) -> {
             double actualGain = newValue.doubleValue() < 0 ? newValue.doubleValue() * 2 : newValue.doubleValue();
             midGain = actualGain;

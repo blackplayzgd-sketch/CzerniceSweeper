@@ -107,4 +107,12 @@ public class Utils {
         //return new ColorAdjust(Math.random(), Math.random() * 2 - 1, Math.random() * 2 - 1, 0);
         return new ColorAdjust(Math.random() * 2 - 1, 0, 0, Math.random() * 2 - 1);
     }
+
+    public static boolean rollChance(double chance) {
+        return Math.random() < chance;
+    }
+
+    public static double randDRange(double min, double max) {
+        return  Math.random() * (max - min) + min;
+    }
 }
