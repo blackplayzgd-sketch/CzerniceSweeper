@@ -52,6 +52,7 @@ public class CzerniceSweeper extends Application {
         primaryStage.setTitle("CzerniceSweeper v0.0.4-Ω");
 
         backgroundMusicPlayer.start();
+        backgroundMusicPlayer.skip();
        // backgroundMusicPlayer.start();
         primaryStage.show();
     }

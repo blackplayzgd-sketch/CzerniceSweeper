@@ -51,13 +51,30 @@ public class SweeperBoard extends Group {
         this.getChildren().add(clickButton);
     }
 
+    private void processFirstClick(int x, int y) {
+        hasClicked = true;
+
+        if (isMine(x, y)) {
+                reset();
+                leftClick(x, y, true);
+        } else {
+            leftClick(x, y, true);
+            if (getRevealedCount() < width * height / 20) {
+                reset();
+                hasClicked = false;
+                leftClick(x, y, true);
+            }
+        }
+    }
+
 
 
     public void leftClick(int x, int y, boolean clickedBgPlayer) {
         if (dead) return;
-        if (isRevealed(x, y) && clickedBgPlayer) chord(x, y);
         if (isFlag(x, y)) return;
 
+        if (!hasClicked) processFirstClick(x, y);
+        if (isRevealed(x, y) && clickedBgPlayer) chord(x, y);
         boolean revealedTiles = false;
 
         if (isMine(x, y)) {
@@ -377,6 +394,17 @@ public class SweeperBoard extends Group {
             }
         }
         return (double) sum / (width * height - mineCount);
+    }
+
+    public int getRevealedCount() {
+        int sum = 0;
+
+        for (int x = 0; x < width; x++) {
+            for (int y = 0; y < height; y++) {
+                if (isRevealed(x, y)) sum++;
+            }
+        }
+        return sum;
     }
 
     private void checkWinCondition() {

@@ -171,10 +171,11 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
 
     private void onEndOfSound() {
         System.out.println("Called back!");
-        long oldSound = BetterBackgroundMusicPlayer.this.sound;
+        CzerniceAudio.retireSound(sound);
 
         try {
             createRandomSound();
+            start();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -182,7 +183,7 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
         //CzerniceAudio.stopSound(oldSound);
 
         System.out.println("Finished calling back!");
-        CzerniceAudio.retireSound(oldSound);
+
         System.out.println("ReALLY finjshed coallids");
     }
 
@@ -195,7 +196,7 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
     }
     public void skip() {
         onEndOfSound();
-        start();
+
     }
 
     public void toggle() {

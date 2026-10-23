@@ -7,10 +7,12 @@ public class ArrayGrid<T> {
     private ArrayList<ArrayList<T>> grid = new ArrayList<>();
     private int width;
     private int height;
+    private T def;
 
     public ArrayGrid(int width, int height, T defaultValue) {
         this.width = width;
         this.height = height;
+        this.def = defaultValue;
 
         populateGrid(defaultValue);
     }
@@ -43,5 +45,16 @@ public class ArrayGrid<T> {
 
     public int getHeight() {
         return height;
+    }
+
+    public ArrayGrid<T> copy() {
+        ArrayGrid<T> newGrid = new ArrayGrid<>(width, height, def);
+        for (int x = 0; x < width; x ++) {
+            for (int y = 0; y < height; y++) {
+                newGrid.set(x, y, get(x, y));
+            }
+        }
+
+        return newGrid;
     }
 }
