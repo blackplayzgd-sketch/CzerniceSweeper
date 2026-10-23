@@ -32,8 +32,6 @@ public class CzerniceSweeper extends Application {
         Game game = new Game(gameSettings);
         Scene gameScene = new Scene(game, WINDOW_SIZE[0], WINDOW_SIZE[1], randomColor());
 
-        BetterBackgroundMusicPlayer bgMusic = new BetterBackgroundMusicPlayer(gameSettings);
-
 
 
 
@@ -53,7 +51,7 @@ public class CzerniceSweeper extends Application {
         primaryStage.getIcons().add(icon);
         primaryStage.setTitle("CzerniceSweeper v0.0.4-Ω");
 
-        bgMusic.start();
+        backgroundMusicPlayer.start();
        // backgroundMusicPlayer.start();
         primaryStage.show();
     }

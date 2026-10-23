@@ -55,12 +55,9 @@ public class Sweeper extends Group {
         board.setLayoutX(50);
         board.setLayoutY(100);
 
-        Button b = new Button("osu!!");
-        b.setOnMouseClicked(e -> {
-            formidableMode = true;
-        });
 
-        this.getChildren().addAll(mineText, resetButton, winView, timer, board, b);
+
+        this.getChildren().addAll(mineText, resetButton, winView, timer, board);
 
         setupUI();
         board.placeMines();
@@ -103,8 +100,8 @@ public class Sweeper extends Group {
     }
 
     private void spawnOsuCircle() {
-        double r = Utils.fracOfRange(60, 10, board.getRevealedFractionNoMines());
-        OsuCircle c = new OsuCircle(r, Utils.fracOfRange(20, 120, board.getRevealedFractionNoMines()), 1.5 * r);
+        double r = Utils.fracOfRange(80, 40, board.getRevealedFractionNoMines());
+        OsuCircle c = new OsuCircle(r, Utils.fracOfRange(60, 100, board.getRevealedFractionNoMines()), 2 * r);
         c.setLayoutX(Utils.randDRange(board.getLayoutX(), board.getLayoutX() + board.getWidth() * SweeperBoard.CELL_SIZE));
         c.setLayoutY(Utils.randDRange(board.getLayoutY(), board.getLayoutY() + board.getHeight() * SweeperBoard.CELL_SIZE));
         c.start();

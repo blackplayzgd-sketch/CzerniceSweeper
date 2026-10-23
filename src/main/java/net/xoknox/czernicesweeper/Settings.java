@@ -119,11 +119,12 @@ public class Settings extends Pane implements IGameSettingable {
         musicLabel.main.setAlignment(Pos.BASELINE_CENTER);
         musicLabel.setPrefSize(100, 40);
 
-        ArrayList<Double> sliderYs = new ArrayList<>(List.of(150d, 170d, 190d, 210d, 230d, 250d, 270d, 290d, 310d, 330d, 350d, 370d));
+        ArrayList<Double> sliderYs = new ArrayList<>(List.of(150d, 170d, 190d, 210d, 230d, 250d, 270d, 290d, 310d, 330d, 350d));
 
-        //sliderYs = Utils.shuffle(sliderYs);
+        sliderYs = Utils.shuffle(sliderYs);
 
-        CzerniceControl<Slider> volumeSlider = new CzerniceControl<>(new Slider(0, 1, 0.5));
+
+        CzerniceControl<Slider> volumeSlider = new CzerniceControl<>(new Slider(0, 4, 2));
         volumeSlider.setLayoutX(450);
         volumeSlider.setLayoutY(sliderYs.get(0));
         volumeSlider.setPrefSize(150, 20);
@@ -203,7 +204,7 @@ public class Settings extends Pane implements IGameSettingable {
             Settings.this.gameSettings.setFeedback(newVal.doubleValue());
         });
 
-        CzerniceControl<Slider> rateDivisorSlider = new CzerniceControl<>(new Slider(-1, 1, 1));
+        CzerniceControl<Slider> rateDivisorSlider = new CzerniceControl<>(new Slider(-63, 64, 1));
         rateDivisorSlider.setLayoutX(450);
         rateDivisorSlider.setLayoutY(sliderYs.get(10));
         rateDivisorSlider.setPrefSize(150, 20);

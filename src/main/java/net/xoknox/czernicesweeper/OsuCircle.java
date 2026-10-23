@@ -2,6 +2,7 @@ package net.xoknox.czernicesweeper;
 
 import javafx.scene.Group;
 import javafx.scene.control.Button;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Background;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
@@ -38,6 +39,8 @@ public class OsuCircle extends Group implements IMinigameable {
         hitCircle.setFill(Color.TRANSPARENT);
         hitCircle.setStroke(Color.RED);
         hitCircle.setScaleY(1.3);
+        hitCircle.setMouseTransparent(true);
+
 
         timer = new DtAnimationTimer() {
             @Override

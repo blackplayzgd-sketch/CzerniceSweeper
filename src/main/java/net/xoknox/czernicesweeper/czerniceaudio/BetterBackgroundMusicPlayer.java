@@ -2,6 +2,7 @@ package net.xoknox.czernicesweeper.czerniceaudio;
 
 import net.xoknox.czernicesweeper.GameSettings;
 import net.xoknox.czernicesweeper.IGameSettingable;
+import net.xoknox.czernicesweeper.Utils;
 import net.xoknox.czernicesweeper.applicationinstallation.AppData;
 import net.xoknox.czernicesweeper.czerniceaudio.mem.MemoryUtil;
 import net.xoknox.czernicesweeper.czerniceaudio.structs.CzerniceEqBandInfo;
@@ -13,10 +14,12 @@ import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 public class BetterBackgroundMusicPlayer implements IGameSettingable {
     private final long engine;
     private long sound;
+    private String songTitle;
     private GameSettings gameSettings;
     private double lowGain = 0d;
     private double midGain = 0d;
@@ -67,28 +70,28 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
         });
 
         this.gameSettings.bitDepthProperty().addListener(((observable, oldValue, newValue) ->{
-            balance = newValue.doubleValue();
-            CzerniceAudio.setBitDepth(sound, (int) balance);
+            bitDepth = newValue.doubleValue();
+            CzerniceAudio.setBitDepth(sound, (int) bitDepth);
         }));
 
         this.gameSettings.wetProperty().addListener(((observable, oldValue, newValue) ->{
-            balance = newValue.doubleValue();
-            CzerniceAudio.setWet(sound, (float) balance);
+            wet = newValue.doubleValue();
+            CzerniceAudio.setWet(sound, (float) wet);
         }));
 
         this.gameSettings.dryProperty().addListener(((observable, oldValue, newValue) ->{
-            balance = newValue.doubleValue();
-            CzerniceAudio.setDry(sound, (float) balance);
+            dry = newValue.doubleValue();
+            CzerniceAudio.setDry(sound, (float) dry);
         }));
 
         this.gameSettings.feedbackProperty().addListener(((observable, oldValue, newValue) ->{
-            balance = newValue.doubleValue();
-            CzerniceAudio.setFeedback(sound, (float) balance);
+            feedback = newValue.doubleValue();
+            CzerniceAudio.setFeedback(sound, (float) feedback);
         }));
 
         this.gameSettings.rateDivisorProperty().addListener(((observable, oldValue, newValue) ->{
-            balance = newValue.doubleValue();
-            CzerniceAudio.setSampleRateReduction(sound, (int) balance);
+            rateDivisor = newValue.doubleValue();
+            CzerniceAudio.setSampleRateReduction(sound, (int) rateDivisor);
         }));
 
         this.engine = CzerniceAudio.createEngine();
@@ -114,6 +117,8 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
         Path song = getSong();
         byte[] songBytes = Files.readAllBytes(song);
 
+        songTitle = song.getFileName().toString();
+
 
         ByteBuffer buffer = MemoryUtil.mallocBytes(songBytes.length);
         buffer.put(songBytes);
@@ -129,7 +134,7 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
         createInfo.sampleRate(44100);
         createInfo.channels(2);
         createInfo.pEqInfo(buf);
-        createInfo.reverbDelay(0);
+        createInfo.reverbDelay(0.5f);
         createInfo.wet(0);
         createInfo.dry(1);
         createInfo.feedback(0);
@@ -138,6 +143,8 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
 
         this.sound = CzerniceAudio.createSound(engine,createInfo);
         setupSound(sound);
+
+        gameSettings.currSongProperty().setValue(songTitle);
 
         System.out.println(this.sound);
         createInfo.free();
@@ -172,7 +179,7 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
             throw new RuntimeException(e);
         }
 
-        CzerniceAudio.stopSound(oldSound);
+        //CzerniceAudio.stopSound(oldSound);
 
         System.out.println("Finished calling back!");
         CzerniceAudio.retireSound(oldSound);
@@ -183,15 +190,18 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
 
     public void start() {
         System.out.println(CzerniceAudio.startSound(sound) + " skibidi");
+        gameSettings.currSongProperty().setValue(songTitle);
+
     }
     public void skip() {
-        CzerniceAudio.stopSound(sound);
         onEndOfSound();
+        start();
     }
 
     public void toggle() {
         System.out.println("togold");
-        System.out.println(CzerniceAudio.stopSound(sound));
+        if (CzerniceAudio.isPlaying(sound)) CzerniceAudio.stopSound(sound);
+        else CzerniceAudio.startSound(sound);
 
     }
 
@@ -199,7 +209,8 @@ public class BetterBackgroundMusicPlayer implements IGameSettingable {
         Path musicDir = AppData.getDirectory().resolve("music");
 
         try (var paths = Files.list(musicDir)) {
-            return paths.filter(Files::isRegularFile).filter(p -> p.getFileName().toString().endsWith(".mp3")).toList().get(2);
+            List<Path> pathList = paths.filter(Files::isRegularFile).filter(p -> p.getFileName().toString().endsWith(".mp3")).toList();
+            return pathList.get(Utils.randIntRange(0, pathList.size()));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
