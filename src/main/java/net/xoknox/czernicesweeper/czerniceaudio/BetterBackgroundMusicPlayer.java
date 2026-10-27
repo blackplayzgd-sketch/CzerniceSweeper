@@ -2,7 +2,7 @@ package net.xoknox.czernicesweeper.czerniceaudio;
 
 import net.xoknox.czernicesweeper.GameSettings;
 import net.xoknox.czernicesweeper.IGameSettingable;
-import net.xoknox.czernicesweeper.Utils;
+import net.xoknox.czernicesweeper.util.Utils;
 import net.xoknox.czernicesweeper.applicationinstallation.AppData;
 import net.xoknox.czernicesweeper.czerniceaudio.mem.MemoryUtil;
 import net.xoknox.czernicesweeper.czerniceaudio.structs.CzerniceEqBandInfo;
@@ -11,7 +11,6 @@ import net.xoknox.czernicesweeper.czerniceaudio.structs.CzerniceSoundCreateInfo;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;

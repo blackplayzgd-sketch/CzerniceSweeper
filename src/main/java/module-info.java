@@ -15,4 +15,8 @@ module net.xoknox.czernicesweeper {
     opens net.xoknox.czernicesweeper.applicationinstallation to javafx.fxml;
     exports net.xoknox.czernicesweeper.czerniceaudio;
     opens net.xoknox.czernicesweeper.czerniceaudio to javafx.fxml;
+    exports net.xoknox.czernicesweeper.minigame;
+    opens net.xoknox.czernicesweeper.minigame to javafx.fxml;
+    exports net.xoknox.czernicesweeper.util;
+    opens net.xoknox.czernicesweeper.util to javafx.fxml;
 }

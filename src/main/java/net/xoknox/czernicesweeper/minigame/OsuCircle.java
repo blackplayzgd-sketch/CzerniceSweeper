@@ -1,15 +1,22 @@
-package net.xoknox.czernicesweeper;
+package net.xoknox.czernicesweeper.minigame;
 
 import javafx.scene.Group;
 import javafx.scene.control.Button;
-import javafx.scene.input.MouseEvent;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.Background;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.text.Text;
+import jdk.jshell.execution.Util;
+import net.xoknox.czernicesweeper.DtAnimationTimer;
 import net.xoknox.czernicesweeper.event.MinigameEvent;
+import net.xoknox.czernicesweeper.util.Utils;
+
+import java.util.ArrayList;
 
 public class OsuCircle extends Group implements IMinigameable {
-    private static final double errorTollerance = 5;
+    private static final double errorTollerance = 10;
 
     private final double r;
     private final Circle mainCircle;

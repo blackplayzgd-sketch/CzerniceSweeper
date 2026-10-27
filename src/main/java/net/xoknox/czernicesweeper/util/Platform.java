@@ -1,4 +1,4 @@
-package net.xoknox.czernicesweeper;
+package net.xoknox.czernicesweeper.util;
 
 import lombok.Getter;
 

@@ -1,7 +1,6 @@
 package net.xoknox.czernicesweeper;
 
 import javafx.scene.Group;
-import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -10,9 +9,8 @@ import javafx.scene.layout.Background;
 import lombok.Getter;
 import lombok.Setter;
 import net.xoknox.czernicesweeper.event.*;
-import org.intellij.lang.annotations.JdkConstants;
-
-import java.util.ArrayList;
+import net.xoknox.czernicesweeper.util.ArrayGrid;
+import net.xoknox.czernicesweeper.util.Utils;
 
 public class SweeperBoard extends Group {
     public static final int CELL_SIZE = 30;
@@ -56,13 +54,13 @@ public class SweeperBoard extends Group {
 
         if (isMine(x, y)) {
                 reset();
-                leftClick(x, y, true);
+                leftClick(x, y, false);
         } else {
-            leftClick(x, y, true);
+            leftClick(x, y, false);
             if (getRevealedCount() < width * height / 20) {
                 reset();
                 hasClicked = false;
-                leftClick(x, y, true);
+                leftClick(x, y, false);
             }
         }
     }
@@ -73,7 +71,10 @@ public class SweeperBoard extends Group {
         if (dead) return;
         if (isFlag(x, y)) return;
 
-        if (!hasClicked) processFirstClick(x, y);
+        if (!hasClicked) {
+            processFirstClick(x, y);
+            return;
+        }
         if (isRevealed(x, y) && clickedBgPlayer) chord(x, y);
         boolean revealedTiles = false;
 

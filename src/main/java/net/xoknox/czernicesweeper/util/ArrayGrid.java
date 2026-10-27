@@ -1,7 +1,6 @@
-package net.xoknox.czernicesweeper;
+package net.xoknox.czernicesweeper.util;
 
 import java.util.ArrayList;
-import java.util.function.UnaryOperator;
 
 public class ArrayGrid<T> {
     private ArrayList<ArrayList<T>> grid = new ArrayList<>();

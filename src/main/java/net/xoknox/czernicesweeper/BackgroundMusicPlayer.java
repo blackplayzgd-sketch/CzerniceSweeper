@@ -1,17 +1,14 @@
 package net.xoknox.czernicesweeper;
 
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
 import lombok.Getter;
 import net.xoknox.czernicesweeper.applicationinstallation.AppData;
+import net.xoknox.czernicesweeper.util.Utils;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 
 public class BackgroundMusicPlayer implements IGameSettingable {

@@ -1,14 +1,11 @@
 package net.xoknox.czernicesweeper;
 
-import javafx.animation.AnimationTimer;
 import javafx.scene.Group;
-import javafx.scene.Node;
-import javafx.scene.effect.Light;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.scene.shape.Line;
 import javafx.scene.shape.Rectangle;
-import javafx.scene.shape.Shape;
+import net.xoknox.czernicesweeper.util.Utils;
 
 public class Engine extends Group {
     private final Circle circle = new Circle(30);

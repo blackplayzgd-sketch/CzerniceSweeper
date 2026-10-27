@@ -1,17 +1,17 @@
 package net.xoknox.czernicesweeper;
 
-import javafx.scene.Group;
 import javafx.scene.control.*;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import lombok.Getter;
-import net.xoknox.czernicesweeper.czerniceaudio.CzerniceAudio;
+import net.xoknox.czernicesweeper.minigame.PopupAd;
 import net.xoknox.czernicesweeper.ui.CzerniceControl;
+import net.xoknox.czernicesweeper.util.Utils;
 
-import static net.xoknox.czernicesweeper.Utils.*;
-import static net.xoknox.czernicesweeper.Utils.fracOfRange;
+import static net.xoknox.czernicesweeper.util.Utils.*;
+import static net.xoknox.czernicesweeper.util.Utils.fracOfRange;
 import static net.xoknox.czernicesweeper.ui.CzerniceControl.DEF_FONT;
 
 public class Game extends Pane implements IGameSettingable {
@@ -75,34 +75,14 @@ public class Game extends Pane implements IGameSettingable {
         setupUI();
 
 
-        CzerniceControl<CheckBox> hardModeCheckBox = new CzerniceControl<>(new CheckBox("Hard moed"));
-        hardModeCheckBox.setLayoutX(1100);
-        hardModeCheckBox.setLayoutY(260);
-        hardModeCheckBox.main.setFont(Font.font(DEF_FONT, 20));
-        hardModeCheckBox.setPrefSize(150, 60);
-        hardModeCheckBox.main.selectedProperty().addListener((observable, oldValue, newValue) -> {
-            sweeper.setHardMode(newValue);
-        });
-
         Menu modeMenu = new Menu("GaemMoad");
 
-        MenuItem normalMode = new MenuItem("Normal");
-        normalMode.setOnAction(e -> {
-            sweeper.setHardMode(false);
-            sweeper.setFormidableMode(false);
-        });
-        MenuItem hardMode = new MenuItem("Schwer");
-        hardMode.setOnAction(e -> {
-            sweeper.setHardMode(true);
-            sweeper.setFormidableMode(false);
-        });
-        MenuItem formidableMode = new MenuItem("Formidabel!");
-        formidableMode.setOnAction(e -> {
-            sweeper.setHardMode(true);
-            sweeper.setFormidableMode(true);
-        });
-        modeMenu.getItems().addAll(
-                normalMode, hardMode, formidableMode);
+        for (SweeperMode m : SweeperMode.values()) {
+            MenuItem mItem = new MenuItem(m.name());
+            mItem.setOnAction(e -> sweeper.setMode(m));
+            modeMenu.getItems().add(mItem);
+        }
+
 
         CzerniceControl<MenuBar> modeMenuBar = new CzerniceControl<>(new MenuBar(modeMenu));
         modeMenuBar.setLayoutX(1100);
@@ -132,6 +112,8 @@ public class Game extends Pane implements IGameSettingable {
         this.getChildren().addAll(winButton, timerButton, timerButton2);
 
          */
+
+
 
         this.getChildren().addAll(sweeper, settingsButton, engine, titleImage, modeMenuBar);
 

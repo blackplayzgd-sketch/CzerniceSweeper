@@ -3,11 +3,16 @@ package net.xoknox.czernicesweeper;
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.scene.image.Image;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.stage.Stage;
 import net.xoknox.czernicesweeper.applicationinstallation.AssetInstaller;
 import net.xoknox.czernicesweeper.czerniceaudio.BetterBackgroundMusicPlayer;
+import net.xoknox.czernicesweeper.minigame.OsuCircle;
+import net.xoknox.czernicesweeper.minigame.SkillCheck;
+import net.xoknox.czernicesweeper.util.Utils;
 
-import static net.xoknox.czernicesweeper.Utils.*;
+import static net.xoknox.czernicesweeper.util.Utils.*;
 
 public class CzerniceSweeper extends Application {
     private BetterBackgroundMusicPlayer backgroundMusicPlayer;
@@ -32,8 +37,9 @@ public class CzerniceSweeper extends Application {
         Game game = new Game(gameSettings);
         Scene gameScene = new Scene(game, WINDOW_SIZE[0], WINDOW_SIZE[1], randomColor());
 
-
-
+        game.addEventFilter(KeyEvent.KEY_PRESSED, event->{
+            SkillCheck.onKeyboardInput(event);
+        });
 
         gameSettings.setStage(primaryStage);
         gameSettings.setGame(game);

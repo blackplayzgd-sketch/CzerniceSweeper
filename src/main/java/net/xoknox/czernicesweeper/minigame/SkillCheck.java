@@ -1,21 +1,20 @@
-package net.xoknox.czernicesweeper;
+package net.xoknox.czernicesweeper.minigame;
 
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.ObjectProperty;
-import javafx.beans.property.Property;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.event.EventHandler;
 import javafx.scene.Group;
 import javafx.scene.control.Button;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
-import javafx.scene.input.MouseButton;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
+import net.xoknox.czernicesweeper.DtAnimationTimer;
+import net.xoknox.czernicesweeper.util.Utils;
 import net.xoknox.czernicesweeper.event.MinigameEvent;
 import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
+import java.util.ArrayList;
+
 public class SkillCheck extends Group implements IMinigameable {
+    private final static ArrayList<SkillCheck> REGISTRY = new ArrayList<>();
     private final Rectangle marker = new Rectangle(2, 15);
     private final double speed;
     private final double completionMargin;
@@ -26,11 +25,13 @@ public class SkillCheck extends Group implements IMinigameable {
     private int moveDir = 1;
 
     public SkillCheck(double width, double speed, double completionMargin) {
+        REGISTRY.add(this);
         this.width = width;
         this.speed = speed;
         this.completionMargin = completionMargin;
-        this.minCompletionX = Math.random() * (width - completionMargin);
-        this.maxCompletionX = minCompletionX + completionMargin;
+        double marginMiddle = Utils.randDRange(0.5 - 0.1, 0.5 + 0.1) * (width);
+        this.minCompletionX = marginMiddle - completionMargin / 2;
+        this.maxCompletionX = marginMiddle + completionMargin / 2;
 
         marker.setY(-2.5);
         marker.setFill(Color.WHITE);
@@ -59,6 +60,11 @@ public class SkillCheck extends Group implements IMinigameable {
             if (event.isPrimaryButtonDown()) click();
         });
 
+        clickButton.addEventHandler(KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == KeyCode.A) click();
+        });
+
+
 
 
         getChildren().addAll(mainRect, marginRect, marker, clickButton);
@@ -86,6 +92,14 @@ public class SkillCheck extends Group implements IMinigameable {
 
     private void lose() {
         fireEvent(new MinigameEvent(this, MinigameEvent.MINIGAME_LOST));
+    }
+
+    public static void onKeyboardInput(KeyEvent event) {
+        KeyCode keyCode = event.getCode();
+        REGISTRY.forEach(sc -> {
+            if (keyCode == KeyCode.SPACE) sc.click();
+            System.out.println("SKILLEDD!!!");
+        });
     }
 
 }

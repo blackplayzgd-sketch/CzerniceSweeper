@@ -1,7 +1,7 @@
 package net.xoknox.czernicesweeper.czerniceaudio.mem;
 
 import lombok.Getter;
-import net.xoknox.czernicesweeper.Platform;
+import net.xoknox.czernicesweeper.util.Platform;
 import org.jetbrains.annotations.Nullable;
 
 import java.nio.ByteBuffer;

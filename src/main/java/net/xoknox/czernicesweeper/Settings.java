@@ -5,11 +5,12 @@ import javafx.scene.control.*;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
 import net.xoknox.czernicesweeper.ui.CzerniceControl;
+import net.xoknox.czernicesweeper.util.Utils;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import static net.xoknox.czernicesweeper.Utils.*;
+import static net.xoknox.czernicesweeper.util.Utils.*;
 
 public class Settings extends Pane implements IGameSettingable {
     private GameSettings gameSettings;

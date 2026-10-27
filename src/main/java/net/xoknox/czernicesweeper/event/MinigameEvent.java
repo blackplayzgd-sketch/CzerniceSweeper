@@ -17,6 +17,7 @@ public class MinigameEvent extends Event {
     public static final EventType<MinigameEvent> MINIGAME_WON =
             new EventType<>(MinigameEvent.ANY, "MINIGAME_WON");
 
+
     @Getter
     private Object origin;
 

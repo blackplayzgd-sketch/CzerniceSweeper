@@ -8,10 +8,13 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Optional;
 
 public class Textures {
     private static final HashMap<String, Path> textures = new HashMap<>();
     private static final HashMap<String, String> texturesImage = new HashMap<>();
+
+    public static final ArrayList<Image> AD_TEXTURES = new ArrayList<>();
 
     public static Image HIDDEN;
     public static Image REVEALED;
@@ -48,7 +51,7 @@ public class Textures {
 
 
     public static void init() throws IOException {
-        String[] textureFiles = new String[]{
+        ArrayList<String> textureFiles = new ArrayList<>(List.of(
                 "hidden", "revealed",
                 "flag", "mine",
                 "empty",
@@ -57,8 +60,13 @@ public class Textures {
                 "logo",
                 "button_red",
                 "button_red_supernova",
-                "main_bg","main_bg_supernova", "settings_bg", "settings_bg_supernova", "settings_bg_2"
-        };
+                "main_bg", "main_bg_supernova", "settings_bg", "settings_bg_supernova", "settings_bg_2"
+        ));
+
+        for (int i = 0; i < 6; i++) {
+            textureFiles.add("ad_" + i);
+        }
+
 
         for (String fileName : textureFiles) {
             Path path = AssetInstaller.installIfMissing("textures/" + fileName + ".png");
@@ -97,5 +105,12 @@ public class Textures {
         SETTINGS_BG_SUPERNOVA = new Image(texturesImage.get("settings_bg_supernova"));
 
         SETTINGS_BG_2 = new Image(texturesImage.get("settings_bg_2"));
+
+        for (int i = 0; i < 20; i++) {
+            String adUrl = texturesImage.get("ad_" + i);
+            if (adUrl == null) continue;
+
+            AD_TEXTURES.add(new Image(adUrl));
+        }
     }
 }

@@ -1,18 +1,13 @@
 package net.xoknox.czernicesweeper.ui;
 
-import javafx.geometry.Pos;
-import javafx.scene.control.Button;
 import javafx.scene.control.Control;
 import javafx.scene.control.Labeled;
-import javafx.scene.effect.ColorAdjust;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.Background;
 import javafx.scene.layout.StackPane;
 import javafx.scene.text.Font;
-import lombok.Getter;
-import lombok.Setter;
 import net.xoknox.czernicesweeper.Textures;
-import net.xoknox.czernicesweeper.Utils;
+import net.xoknox.czernicesweeper.util.Utils;
 
 import java.util.ArrayList;
 

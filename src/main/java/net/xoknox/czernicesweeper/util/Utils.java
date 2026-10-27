@@ -1,4 +1,4 @@
-package net.xoknox.czernicesweeper;
+package net.xoknox.czernicesweeper.util;
 
 import javafx.beans.property.Property;
 import javafx.beans.property.SimpleObjectProperty;
@@ -11,6 +11,8 @@ import javafx.scene.layout.Background;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Shape;
+import net.xoknox.czernicesweeper.CzerniceSweeper;
+import net.xoknox.czernicesweeper.SweeperBoard;
 import net.xoknox.czernicesweeper.ui.CzerniceControl;
 
 import java.net.URL;
@@ -21,7 +23,7 @@ public class Utils {
     public static final int[] WINDOW_CENTER = new int[2];
     public static final int MINE_COUNT = 110;
     public static final ArrayList<Node> NO_PAINT = new ArrayList<>();
-    public static final ArrayList<CzerniceControl<?>> CZERNICE = new ArrayList<>();
+    public static final ArrayList<CzerniceControl<?>> CZERNICE_REGISTRY = new ArrayList<>();
 
     private static final Property<Color> color = new SimpleObjectProperty<>(Color.WHEAT);
 
@@ -114,5 +116,25 @@ public class Utils {
 
     public static double randDRange(double min, double max) {
         return  Math.random() * (max - min) + min;
+    }
+
+    public static double[] dArr(double... nums) {
+        double[] arr = new double[nums.length];
+        for (int i = 0; i < nums.length; i++) {
+            arr[i] = nums[i];
+        }
+        return arr;
+    }
+
+    public static double dist(double x1, double y1, double x2, double y2) {
+        return Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+    }
+
+    public static boolean isFurtherThan(double x1, double y1, double x2, double y2, double dist) {
+        return dist(x1, y1, x2, y2) > dist;
+    }
+
+    public static double clamp(double val, double min, double max) {
+        return Math.max(min, Math.min(max, val));
     }
 }
